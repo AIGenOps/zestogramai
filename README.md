@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="assets/logo.jpg" alt="Zestogram Logo" width="300" />
+</p>
+
 # Zestogram - Telegram Instagram Downloader Bot
 
 A self-hosted Telegram bot that runs continuously to download Instagram media (Reels, Posts, Carousels, IGTV, Stories) and send it back to you. It uses `yt-dlp` for robust downloading, supports concurrent processing via an async queue, and leverages a local Telegram Bot API server to bypass the 50MB file size limit.
