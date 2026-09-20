@@ -1,0 +1,8 @@
+python-telegram-bot[job-queue]==21.5
+yt-dlp>=2026.8.19
+aiosqlite==0.20.0
+pydantic==2.8.2
+pydantic-settings==2.4.0
+python-dotenv==1.0.1
+instaloader==4.13
+Pillow==10.4.0
