@@ -3,9 +3,10 @@ from telegram.ext import ContextTypes
 import logging
 
 from src.utils.access_control import check_access, enforce_rate_limit
-from src.link_extractor import extract_instagram_urls
-from src.db import add_job
+from src.link_extractor import parse_text_urls
+from src.db import add_job, update_job_status, update_job_message_id
 from src.queue_manager import enqueue_job
+from src.services.membership import submit_job_if_allowed
 
 logger = logging.getLogger(__name__)
 
@@ -16,46 +17,33 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await check_access(update, context):
         return
 
-    # Check for media attachments
-    msg = update.message
-    file_id = None
-    file_name = None
-    
-    if msg.document:
-        file_id = msg.document.file_id
-        file_name = msg.document.file_name or "document"
-    elif msg.video:
-        file_id = msg.video.file_id
-        file_name = msg.video.file_name or "video.mp4"
-    elif msg.audio:
-        file_id = msg.audio.file_id
-        file_name = msg.audio.file_name or "audio.mp3"
-        
-    if file_id:
-        from telegram import InlineKeyboardButton, InlineKeyboardMarkup
-        keyboard = [
-            [InlineKeyboardButton("🎥 Convert to MP4 Video", callback_data="convert_to:mp4")]
-        ]
-        reply_markup = InlineKeyboardMarkup(keyboard)
-        await msg.reply_text(
-            f"File detected: `{file_name}`\nWould you like to convert it to standard MP4 video format?",
-            reply_markup=reply_markup,
-            parse_mode="Markdown",
-            reply_to_message_id=msg.message_id
-        )
-        return
-
-    # Existing URL logic
-    text = msg.text
+    text = update.message.text
     if not text:
         return
 
     user_id = update.effective_user.id
     chat_id = update.effective_chat.id
-
-    # Check for reply keyboard button clicks
     clean_text = text.strip()
-    if clean_text in ("👥 Users", "users"):
+
+    # Check for command aliases or reply keyboard buttons
+    if clean_text in ("❓ Help", "help"):
+        from src.handlers.commands import help_command
+        await help_command(update, context)
+        return
+    elif clean_text in ("status", "/status"):
+        from src.handlers.commands import status_command
+        await status_command(update, context)
+        return
+    elif clean_text in ("🛑 Cancel Jobs", "🛑 Cancel", "cancel"):
+        from src.handlers.commands import cancel_command
+        await cancel_command(update, context)
+        return
+
+    elif clean_text in ("🧹 Clear Chat", "clear"):
+        from src.handlers.commands import clear_command
+        await clear_command(update, context)
+        return
+    elif clean_text in ("👥 Users", "users"):
         from src.handlers.admin import users_command
         await users_command(update, context)
         return
@@ -75,60 +63,61 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         from src.handlers.settings import settings_command
         await settings_command(update, context)
         return
-    elif clean_text in ("❓ Help", "help"):
-        from src.handlers.commands import help_command
-        await help_command(update, context)
-        return
-    elif clean_text in ("🛑 Cancel Jobs", "🛑 Cancel", "cancel"):
-        from src.handlers.commands import cancel_command
-        await cancel_command(update, context)
-        return
-    elif clean_text in ("🧹 Clear Chat", "clear"):
-        from src.handlers.commands import clear_command
-        await clear_command(update, context)
-        return
     
-    urls = extract_instagram_urls(text)
+    supported_urls, unsupported_urls = parse_text_urls(text)
     
-    if not urls:
-        if "/p/" in text:
-            await update.message.reply_text("Instagram posts and carousels are no longer supported. Please send Reels only.")
+    if not supported_urls:
+        if unsupported_urls:
+            await update.message.reply_text("This link is not supported.")
         else:
-            from src.utils.keyboard import get_reply_keyboard_for_user
-            await update.message.reply_text(
-                "Please send a valid video link (Instagram Reel, YouTube Short/Video, etc).",
-                reply_markup=get_reply_keyboard_for_user(user_id)
-            )
+            await update.message.reply_text("Send me an Instagram Reel or YouTube Short link and I'll download it for you.")
         return
-        
-    status_msg = await update.message.reply_text(
-        f"**Processing {len(urls)} item(s)...**",
-        parse_mode="Markdown",
-        reply_to_message_id=update.message.message_id
-    )
-    
-    from src.utils.queue_ui import batch_tracker
-    jobs_info = []
-    
-    for url in urls:
+
+    # Process supported URLs
+    for url in supported_urls:
         if not await enforce_rate_limit(user_id):
-            await update.message.reply_text("⚠️ Rate limit exceeded. Please wait a minute before sending more links.")
+            await update.message.reply_text("Rate limit exceeded. Please wait a minute before sending more links.")
             break
             
-        job_id = await add_job(user_id, chat_id, status_msg.message_id, url)
-        jobs_info.append({'job_id': job_id, 'url': url})
+        allowed, reason, job_id = await submit_job_if_allowed(
+            user_id=user_id,
+            chat_id=chat_id,
+            message_id=0,
+            url=url,
+            original_message_id=update.message.message_id
+        )
         
-        await enqueue_job({
-            'job_id': job_id,
-            'user_id': user_id,
-            'chat_id': chat_id,
-            'url': url,
-            'message_id': status_msg.message_id,
-            'original_message_id': update.message.message_id,
-            'is_batch': True
-        })
+        if not allowed:
+            if "Quota limit" in reason or reason == "QUOTA_EXHAUSTED":
+                from src.services.payment import send_upgrade_prompt
+                await send_upgrade_prompt(update, context, user_id)
+            else:
+                await update.message.reply_text(reason)
+            break
+            
+        # Send temporary processing message ONLY for accepted jobs
+        processing_msg = await update.message.reply_text("Processing your video...")
         
-    if jobs_info:
-        batch_tracker.add_batch(chat_id, status_msg.message_id, jobs_info)
-        for j in jobs_info:
-            await batch_tracker.update_job(context.bot, status_msg.message_id, j['job_id'], 'queued')
+        msg_id = getattr(processing_msg, 'message_id', None)
+        if isinstance(msg_id, int):
+            await update_job_message_id(job_id, msg_id)
+        await update_job_status(job_id, 'queued')
+        
+        try:
+            await enqueue_job({
+                'job_id': job_id,
+                'user_id': user_id,
+                'chat_id': chat_id,
+                'url': url,
+                'message_id': processing_msg.message_id,
+                'original_message_id': update.message.message_id,
+                'is_batch': False
+            })
+        except Exception as e:
+            logger.error(f"Failed to enqueue job {job_id}: {e}")
+            await update_job_status(job_id, 'failed', f"Queue error: {e}")
+            await update.message.reply_text("Unable to process this video. Please try again.")
+            break
+
+    if unsupported_urls and supported_urls:
+        await update.message.reply_text("This link is not supported.")

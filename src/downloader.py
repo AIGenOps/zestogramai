@@ -5,7 +5,10 @@ import shutil
 import logging
 from typing import List, Dict, Any, Optional, Callable
 from src.config import config
-import instaloader
+try:
+    import instaloader
+except ImportError:
+    instaloader = None
 
 logger = logging.getLogger(__name__)
 
@@ -27,6 +30,7 @@ def _download_sync(url: str, output_dir: str, audio_only: bool, progress_callbac
         'noplaylist': False,
         'format_sort': ['vcodec:h264', 'ext:mp4:m4a'],
         'restrictfilenames': True,
+        'socket_timeout': 30,
     }
     
     if progress_callback:
@@ -135,7 +139,10 @@ async def download_media(job_id: int, url: str, audio_only: bool = False, progre
     retries = 0
     while retries <= config.max_retries:
         try:
-            files = await asyncio.to_thread(_download_sync, url, output_dir, audio_only, progress_callback)
+            files = await asyncio.wait_for(
+                asyncio.to_thread(_download_sync, url, output_dir, audio_only, progress_callback),
+                timeout=300
+            )
             if not files:
                 raise DownloadError("No files were downloaded.", retryable=False)
             return files

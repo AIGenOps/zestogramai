@@ -1,25 +1,55 @@
 import re
 import urllib.parse
-from typing import List
+from typing import List, Tuple
 
-def extract_instagram_urls(text: str) -> List[str]:
+def is_supported_url(url: str) -> bool:
     """
-    Extracts and normalizes valid Instagram URLs from a text message.
-    Deduplicates URLs and strips tracking query parameters.
+    Checks if a URL belongs to a supported platform:
+    1. Instagram Reels (/reel/, /reels/, /share/r/, /share/reel/, /<username>/reel/)
+    2. YouTube Shorts (/shorts/, youtu.be shortlinks)
     """
-    # Base pattern matching Instagram domains and YouTube/TikTok/X
-    pattern = r"(https?://(?:www\.|m\.)?(?:instagram\.com|instagr\.am|youtube\.com|youtu\.be|y2u\.be)[^\s]*)"
+    try:
+        parsed = urllib.parse.urlparse(url)
+        netloc = parsed.netloc.lower()
+        path = parsed.path
+        
+        # Instagram Reel checks
+        if any(domain in netloc for domain in ("instagram.com", "instagr.am")):
+            if re.search(r"/(?:reels?|share/(?:r|reel))/([^/?#&]+)", path, re.IGNORECASE):
+                return True
+            if re.search(r"^/[^/]+/(?:reels?)/([^/?#&]+)", path, re.IGNORECASE):
+                return True
+            return False
+            
+        # YouTube Shorts checks
+        if any(domain in netloc for domain in ("youtube.com", "youtu.be", "y2u.be")):
+            if re.search(r"^/shorts/([^/?#&]+)", path, re.IGNORECASE):
+                return True
+            if netloc in ("youtu.be", "y2u.be") and path.strip("/"):
+                return True
+            return False
+            
+        return False
+    except Exception:
+        return False
+
+def parse_text_urls(text: str) -> Tuple[List[str], List[str]]:
+    """
+    Parses URLs from text message and categorizes them into:
+    - supported_urls: Instagram Reels & YouTube Shorts
+    - unsupported_urls: All other URLs (Posts, Stories, Watch, TikTok, etc.)
+    Deduplicates URLs and strips query parameters.
+    """
+    pattern = r"(https?://[^\s]+)"
     raw_matches = re.findall(pattern, text)
     
-    valid_urls = []
+    supported_urls = []
+    unsupported_urls = []
     
     for match in raw_matches:
-        # Clean trailing punctuation
         match = match.rstrip(".,;:)'\"!]")
-        
         try:
             parsed = urllib.parse.urlparse(match)
-            # Remove query parameters to normalize the URL
             clean_url = urllib.parse.urlunparse((
                 parsed.scheme if parsed.scheme else "https",
                 parsed.netloc,
@@ -27,43 +57,20 @@ def extract_instagram_urls(text: str) -> List[str]:
                 "", "", ""
             ))
             
-            # Allow all paths, yt-dlp will handle the specifics, but we enforce basic structures
-            path = parsed.path
-            
-            # Supported shapes:
-            # 1. /p/<code>/
-            # 2. /reel/<code>/ or /reels/<code>/
-            # 3. /tv/<code>/
-            # 4. /stories/<username>/<id>/
-            # 5. /<username>/reel/<code>/ or /<username>/p/<code>/
-            # 6. instagr.am/... shortlinks
-            # 7. /share/...
-            
-            is_valid_shape = False
-            
-            if parsed.netloc in ["instagr.am", "youtu.be", "y2u.be", "m.youtube.com"]:
-                is_valid_shape = True
-            elif re.match(r"^/shorts/.*", path) or re.match(r"^/watch.*", path):
-                is_valid_shape = True
-            elif re.match(r"^/p/[^/]+/?", path) or re.match(r"^/[^/]+/p/[^/]+/?", path):
-                # Posts and carousels are explicitly not supported
-                is_valid_shape = False
-            elif re.match(r"^/(reel|reels|tv)/[^/]+/?", path):
-                is_valid_shape = True
-            elif re.match(r"^/stories/[^/]+/[^/]+/?", path):
-                is_valid_shape = True
-            elif re.match(r"^/[^/]+/(reel|reels|tv)/[^/]+/?", path):
-                is_valid_shape = True
-            elif re.match(r"^/share/.*", path):
-                is_valid_shape = True
-            elif re.match(r"^/(?!about|developer|explore|help|press|legal|privacy|terms|p)[^/]+/?$", path):
-                # Potential profile link
-                is_valid_shape = True
-                
-            if is_valid_shape and clean_url not in valid_urls:
-                valid_urls.append(clean_url)
-                
+            if is_supported_url(clean_url):
+                if clean_url not in supported_urls:
+                    supported_urls.append(clean_url)
+            else:
+                if clean_url not in unsupported_urls:
+                    unsupported_urls.append(clean_url)
         except Exception:
             pass
             
-    return valid_urls
+    return supported_urls, unsupported_urls
+
+def extract_instagram_urls(text: str) -> List[str]:
+    """
+    Backward-compatible helper that returns only supported URLs.
+    """
+    supported, _ = parse_text_urls(text)
+    return supported

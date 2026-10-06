@@ -7,7 +7,7 @@ import threading
 from src.config import config, get_data_dir
 from src.db import init_db
 from src.queue_manager import start_workers
-from src.handlers.commands import start_command, help_command, queue_command, stats_command, cancel_command, clear_command
+from src.handlers.commands import start_command, help_command, queue_command, stats_command, cancel_command, clear_command, status_command
 from src.handlers.settings import settings_command, settings_callback
 from src.handlers.message_handler import handle_message
 from telegram import BotCommand
@@ -63,6 +63,7 @@ async def post_init(application):
     except Exception as e:
         logger.warning(f"Failed to set bot commands: {e}")
         
+    config.validate_payment_config()
     logger.info("Database initialized and workers started.")
 
 def main():
@@ -84,17 +85,30 @@ def main():
     
     app.add_handler(CommandHandler("start", start_command))
     app.add_handler(CommandHandler("help", help_command))
+    app.add_handler(CommandHandler("status", status_command))
     app.add_handler(CommandHandler("settings", settings_command))
     app.add_handler(CommandHandler("queue", queue_command))
-    app.add_handler(CommandHandler("stats", stats_command))
     app.add_handler(CommandHandler("cancel", cancel_command))
     app.add_handler(CommandHandler("clear", clear_command))
-    
-    from src.handlers.admin import users_command, ban_command, unban_command, health_command
-    app.add_handler(CommandHandler("users", users_command))
-    app.add_handler(CommandHandler("ban", ban_command))
-    app.add_handler(CommandHandler("unban", unban_command))
-    app.add_handler(CommandHandler("health", health_command))
+
+    from src.handlers.admin import (
+        stats_command,
+        user_command,
+        grantpro_command,
+        grantunlimited_command,
+        revoke_command,
+        addadmin_command,
+        removeadmin_command,
+        admins_command
+    )
+    app.add_handler(CommandHandler("stats", stats_command))
+    app.add_handler(CommandHandler("user", user_command))
+    app.add_handler(CommandHandler("grantpro", grantpro_command))
+    app.add_handler(CommandHandler("grantunlimited", grantunlimited_command))
+    app.add_handler(CommandHandler("revoke", revoke_command))
+    app.add_handler(CommandHandler("addadmin", addadmin_command))
+    app.add_handler(CommandHandler("removeadmin", removeadmin_command))
+    app.add_handler(CommandHandler("admins", admins_command))
     
     from telegram.ext import CallbackQueryHandler
     from src.handlers.convert_handler import convert_callback

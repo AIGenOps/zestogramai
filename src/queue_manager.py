@@ -15,9 +15,14 @@ from src.utils.media_processor import compress_video, strip_metadata
 
 logger = logging.getLogger(__name__)
 
-memory_queue = asyncio.Queue()
+memory_queues = {
+    'unlimited': asyncio.Queue(),
+    'pro': asyncio.Queue(),
+    'free': asyncio.Queue()
+}
 use_memory_queue = False
 redis_client = None
+_pop_counter = 0
 
 async def init_redis():
     global redis_client, use_memory_queue
@@ -37,15 +42,48 @@ async def init_redis():
             logger.warning(f"Could not connect to Redis ({e}). Falling back to in-memory queue.")
             use_memory_queue = True
 
-async def pop_job() -> Dict[str, Any]:
+async def pop_job() -> Optional[Dict[str, Any]]:
+    global _pop_counter
     await init_redis()
-    if use_memory_queue:
-        return await memory_queue.get()
+    
+    cycle = _pop_counter % 9
+    _pop_counter += 1
+    
+    # 5:3:1 Weighted Fair Priority ratio (Unlimited : Pro : Free)
+    if cycle < 5:
+        tier_order = ['unlimited', 'pro', 'free']
+    elif cycle < 8:
+        tier_order = ['pro', 'unlimited', 'free']
     else:
-        raw_data = await redis_client.brpop('zestogram:job_queue', timeout=0)
-        if raw_data:
-            return json.loads(raw_data[1])
+        tier_order = ['free', 'unlimited', 'pro']
+
+    if use_memory_queue:
+        for tier in tier_order:
+            q = memory_queues[tier]
+            if not q.empty():
+                try:
+                    return q.get_nowait()
+                except asyncio.QueueEmpty:
+                    pass
         return None
+    else:
+        for tier in tier_order:
+            raw_data = await redis_client.rpop(f'zestogram:queue:{tier}')
+            if raw_data:
+                return json.loads(raw_data)
+        return None
+
+def map_error_to_user_message(error: Any) -> str:
+    err_str = str(error).lower()
+    if any(kw in err_str for kw in ("not supported", "unsupported", "posts and carousels")):
+        return "This link is not supported."
+    if any(kw in err_str for kw in ("private", "login", "not found", "404", "sign in", "unavailable", "removed")):
+        return "This video is unavailable or private."
+    if any(kw in err_str for kw in ("429", "too many requests", "rate limit", "timeout", "connection", "network", "temporary")):
+        return "Unable to access this video right now. Please try again later."
+    if any(kw in err_str for kw in ("ffmpeg", "compress", "strip_metadata", "too large", "cannot be compressed", "processing")):
+        return "Unable to process this video. Please try again."
+    return "Unable to download this video right now. Please try again later."
 
 async def worker(worker_id: int, app: Application):
     await init_redis()
@@ -54,74 +92,47 @@ async def worker(worker_id: int, app: Application):
         try:
             job_data = await pop_job()
             if not job_data:
+                await asyncio.sleep(0.1)
                 continue
                 
             job_id = job_data['job_id']
-            job_id = job_data['job_id']
             chat_id = job_data['chat_id']
             url = job_data['url']
-            message_id = job_data['message_id']
+            message_id = job_data.get('message_id')
             user_id = job_data['user_id']
-            original_message_id = job_data['original_message_id']
+            original_message_id = job_data.get('original_message_id')
             
             try:
                 job = await get_job(job_id)
-                if job and job['status'] == 'cancelled':
+                if not job or job['status'] in ('cancelled', 'failed', 'success'):
                     continue
-    
+
+                # Same-User FIFO Enforcement: Ensure earlier jobs for this user complete first
+                from src.db import has_earlier_pending_job
+                if await has_earlier_pending_job(user_id, job_id):
+                    await enqueue_job(job_data)
+                    await asyncio.sleep(0.2)
+                    continue
+
+                from src.services.membership import get_user_quota_info, Plan
+                quota_info = await get_user_quota_info(user_id)
+                if quota_info.effective_plan != Plan.UNLIMITED and quota_info.usage >= quota_info.limit:
+                    logger.warning(f"Job {job_id} skipped: User {user_id} quota exhausted.")
+                    await update_job_status(job_id, 'failed', 'Quota limit reached')
+                    if message_id:
+                        try:
+                            await app.bot.edit_message_text(chat_id=chat_id, message_id=message_id, text="Quota limit reached for your current plan window.")
+                        except TelegramError:
+                            pass
+                    continue
+
                 await update_job_status(job_id, 'downloading')
                 
                 chat_id = job['chat_id']
                 url = job['url']
                 
-                # Fetch user settings for auto-cleanup
-                settings = await get_user_settings(user_id)
-                
-                # Use force_audio flag from job_data (added via /audio command)
                 audio_only = job_data.get('force_audio', False)
-                auto_cleanup = settings.get('auto_cleanup', False)
                 
-                last_edit_time = 0
-                
-                from src.utils.queue_ui import batch_tracker
-                is_batch = job_data.get('is_batch', False)
-                
-                async def notify_ui(status, progress=None):
-                    if is_batch:
-                        await batch_tracker.update_job(app.bot, message_id, job_id, status, progress)
-                    else:
-                        emoji = "⬇️" if status == 'downloading' else "⚙️" if status == 'processing' else "📤" if status == 'uploading' else "❌"
-                        text = f"{emoji} {status.title()}..."
-                        if progress:
-                            text += f"\n{progress}"
-                        try:
-                            await app.bot.edit_message_text(chat_id=chat_id, message_id=message_id, text=text)
-                        except TelegramError:
-                            pass
-                            
-                # This callback will run in a separate thread because yt-dlp is synchronous
-                def progress_hook(d):
-                    nonlocal last_edit_time
-                    if d['status'] == 'downloading':
-                        current_time = time.time()
-                        if current_time - last_edit_time > 3.0: # Throttle to 3 seconds
-                            last_edit_time = current_time
-                            try:
-                                percent = d.get('_percent_str', '').strip()
-                                speed = d.get('_speed_str', '').strip()
-                                eta = d.get('_eta_str', '').strip()
-                                
-                                progress = f"{percent} ({speed}) ETA: {eta}"
-                                if is_batch:
-                                    progress = percent
-                                
-                                asyncio.run_coroutine_threadsafe(
-                                    notify_ui('downloading', progress),
-                                    asyncio.get_running_loop()
-                                )
-                            except Exception:
-                                pass
-    
                 from src.db import get_cached_media
                 cached_file_id = await get_cached_media(url, is_audio=audio_only)
                 
@@ -132,28 +143,20 @@ async def worker(worker_id: int, app: Application):
                         'is_video': not audio_only,
                         'caption': ''
                     }]
-                    await notify_ui('uploading')
                 else:
-                    await notify_ui('downloading')
-        
                     if url.startswith("convert:"):
                         from src.converter import process_conversion
                         files = await process_conversion(app.bot, job_id, url)
                     else:
-                        files = await download_media(job_id, url, audio_only=audio_only, progress_callback=progress_hook)
+                        files = await download_media(job_id, url, audio_only=audio_only)
                     
-                    await notify_ui('processing')
-        
-                    # Post-download processing (Compression & Metadata)
                     processed_files = []
                     for f in files:
                         path = f['path']
                         is_video = f['is_video']
                         
-                        # Strip metadata
                         await strip_metadata(path, is_video)
                         
-                        # Compress video if local bot API is disabled and >50MB
                         if not config.use_local_bot_api:
                             import os
                             if os.path.exists(path) and os.path.getsize(path) > 49.5 * 1024 * 1024:
@@ -172,38 +175,50 @@ async def worker(worker_id: int, app: Application):
                                     
                         processed_files.append(f)
     
-                await notify_ui('uploading')
-    
                 class DummyContext:
                     def __init__(self, bot):
                         self.bot = bot
                 
+                # 1. Deliver video to Telegram user
                 await send_downloaded_media(DummyContext(app.bot), chat_id, url, processed_files)
                 
+                # 2. Record successful delivery for quota atomically
+                from src.services.membership import record_successful_delivery
+                await record_successful_delivery(user_id, job_id=job_id)
+
+                # 3. Mark job as success in DB
                 await update_job_status(job_id, 'success')
-                await notify_ui('success')
                 
-                if not is_batch:
+                # 4. Successful delivery cleanup: delete temporary processing message & original URL message
+                if message_id and message_id > 0:
                     try:
                         await app.bot.delete_message(chat_id=chat_id, message_id=message_id)
                     except TelegramError:
                         pass
                     
-                # Auto-Cleanup: Delete the original message containing the link if setting is on
-                if auto_cleanup and original_message_id:
+                if original_message_id and original_message_id > 0:
                     try:
                         await app.bot.delete_message(chat_id=chat_id, message_id=original_message_id)
-                    except TelegramError as e:
-                        logger.warning(f"Could not delete original message for auto-cleanup: {e}")
+                    except TelegramError:
+                        pass
     
-            except DownloadError as e:
+            except Exception as e:
+                mapped_msg = map_error_to_user_message(e)
                 logger.error(f"Job {job_id} failed: {e}")
                 await update_job_status(job_id, 'failed', str(e))
-                await notify_ui('failed', str(e))
-            except Exception as e:
-                logger.exception(f"Unexpected error in job {job_id}: {e}")
-                await update_job_status(job_id, 'failed', str(e))
-                await notify_ui('failed', 'Unexpected error')
+                if message_id and message_id > 0:
+                    try:
+                        await app.bot.edit_message_text(chat_id=chat_id, message_id=message_id, text=mapped_msg)
+                    except TelegramError:
+                        try:
+                            await app.bot.send_message(chat_id=chat_id, text=mapped_msg)
+                        except TelegramError:
+                            pass
+                else:
+                    try:
+                        await app.bot.send_message(chat_id=chat_id, text=mapped_msg)
+                    except TelegramError:
+                        pass
             finally:
                 cleanup_job_files(job_id)
 
@@ -211,22 +226,60 @@ async def worker(worker_id: int, app: Application):
             logger.exception(f"Unexpected error in worker loop: {e}")
             await asyncio.sleep(1)
 
+async def reconcile_queue():
+    """
+    Reconciles queued jobs from SQLite database into queue memory/Redis upon startup.
+    Ensures SQLite remains authoritative source of truth.
+    """
+    from src.db import get_all_queued_jobs, recover_stale_jobs
+    await recover_stale_jobs()
+    queued_jobs = await get_all_queued_jobs()
+    for job in queued_jobs:
+        job_data = {
+            'job_id': job['id'],
+            'user_id': job['user_id'],
+            'chat_id': job['chat_id'],
+            'url': job['url'],
+            'message_id': job['message_id'],
+            'original_message_id': None,
+            'is_batch': False
+        }
+        await enqueue_job(job_data)
+
 async def start_workers(app: Application):
     await init_redis()
+    await reconcile_queue()
     for i in range(config.max_concurrent_downloads):
         asyncio.create_task(worker(i, app))
 
+
 async def enqueue_job(job_data: Dict[str, Any]):
     await init_redis()
-    if use_memory_queue:
-        await memory_queue.put(job_data)
+    user_id = job_data['user_id']
+    from src.services.membership import get_effective_plan, Plan
+    plan = await get_effective_plan(user_id)
+    
+    if plan == Plan.UNLIMITED:
+        tier = 'unlimited'
+    elif plan == Plan.PRO:
+        tier = 'pro'
     else:
-        await redis_client.lpush('zestogram:job_queue', json.dumps(job_data))
+        tier = 'free'
+        
+    job_data['tier'] = tier
+    
+    if use_memory_queue:
+        await memory_queues[tier].put(job_data)
+    else:
+        await redis_client.lpush(f'zestogram:queue:{tier}', json.dumps(job_data))
 
 async def get_queue_length() -> int:
     await init_redis()
     if use_memory_queue:
-        return memory_queue.qsize()
+        return sum(q.qsize() for q in memory_queues.values())
     else:
-        return await redis_client.llen('zestogram:job_queue')
+        total = 0
+        for tier in ('unlimited', 'pro', 'free'):
+            total += await redis_client.llen(f'zestogram:queue:{tier}')
+        return total
 

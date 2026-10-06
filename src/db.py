@@ -1,6 +1,7 @@
 import aiosqlite
 import asyncio
 from typing import Optional, List, Dict, Any
+from datetime import datetime, timezone, timedelta
 import os
 
 from src.config import get_data_dir
@@ -18,6 +19,8 @@ async def init_db():
     DB_PATH = get_db_path()
     os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
     async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("PRAGMA journal_mode=WAL;")
+        await db.execute("PRAGMA busy_timeout=5000;")
         await db.execute('''
             CREATE TABLE IF NOT EXISTS jobs (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -57,16 +60,238 @@ async def init_db():
                 banned_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         ''')
+        await db.execute('''
+            CREATE TABLE IF NOT EXISTS users (
+                user_id INTEGER PRIMARY KEY,
+                membership_type TEXT DEFAULT 'FREE',
+                pro_expires_at TIMESTAMP,
+                is_unlimited BOOLEAN DEFAULT 0,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                quota_window_start TIMESTAMP,
+                quota_usage INTEGER DEFAULT 0
+            )
+        ''')
+        await db.execute('''
+            CREATE TABLE IF NOT EXISTS admins (
+                user_id INTEGER PRIMARY KEY,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+
+        async with db.execute("PRAGMA table_info(jobs)") as cursor:
+            columns = [row[1] for row in await cursor.fetchall()]
+            if 'quota_recorded' not in columns:
+                await db.execute("ALTER TABLE jobs ADD COLUMN quota_recorded INTEGER DEFAULT 0")
+            if 'original_message_id' not in columns:
+                await db.execute("ALTER TABLE jobs ADD COLUMN original_message_id INTEGER")
+
+        
+        # Recover stale downloading jobs from previous process crash/restart
+        await db.execute(
+            "UPDATE jobs SET status = 'failed', error_reason = 'Interrupted by system restart' WHERE status = 'downloading'"
+        )
         await db.commit()
 
-async def add_job(user_id: int, chat_id: int, message_id: int, url: str) -> int:
+async def recover_stale_jobs() -> int:
+    """
+    Recovers any jobs left in 'downloading' status due to process interruption or crash.
+    Transitions them to 'failed' so abandoned pending quota reservations are freed.
+    """
     async with aiosqlite.connect(DB_PATH) as db:
         cursor = await db.execute(
-            "INSERT INTO jobs (user_id, chat_id, message_id, url, status) VALUES (?, ?, ?, ?, ?)",
-            (user_id, chat_id, message_id, url, "queued")
+            "UPDATE jobs SET status = 'failed', error_reason = 'Interrupted by system restart' WHERE status = 'downloading'"
+        )
+        await db.commit()
+        return cursor.rowcount
+
+async def get_pending_jobs_count(user_id: int) -> int:
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute(
+            "SELECT COUNT(*) FROM jobs WHERE user_id = ? AND status IN ('queued', 'downloading')",
+            (user_id,)
+        ) as cursor:
+            row = await cursor.fetchone()
+            return row[0] if row else 0
+
+async def has_earlier_pending_job(user_id: int, job_id: int) -> bool:
+    """
+    Returns True if there is an earlier job (id < job_id) for the same user
+    that is still in 'queued' or 'downloading' status.
+    Guarantees strict same-user FIFO ordering across workers.
+    """
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute(
+            "SELECT 1 FROM jobs WHERE user_id = ? AND id < ? AND status IN ('queued', 'downloading') LIMIT 1",
+            (user_id, job_id)
+        ) as cursor:
+            row = await cursor.fetchone()
+            return row is not None
+
+async def mark_job_quota_recorded(job_id: int) -> bool:
+    """
+    Atomically marks quota_recorded = 1 for job_id if it was 0.
+    Returns True if this was the first time (successful mark), False if already marked.
+    """
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute(
+            "UPDATE jobs SET quota_recorded = 1 WHERE id = ? AND quota_recorded = 0",
+            (job_id,)
+        )
+        await db.commit()
+        return cursor.rowcount > 0
+
+async def record_delivery_atomic(
+    user_id: int,
+    job_id: Optional[int],
+    window_hours: int,
+    free_limit: int,
+    pro_limit: int,
+    now: datetime
+) -> Tuple[bool, Dict[str, Any]]:
+    """
+    Atomically records a successful Telegram delivery in a single SQLite transaction:
+    1. Checks and marks job_id quota_recorded = 1 if job_id provided.
+    2. Calculates new quota window and usage.
+    3. Saves user record to DB.
+    4. Commits both job and user update in ONE transaction.
+    """
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        
+        if job_id is not None:
+            cursor = await db.execute(
+                "UPDATE jobs SET quota_recorded = 1 WHERE id = ? AND quota_recorded = 0",
+                (job_id,)
+            )
+            if cursor.rowcount == 0:
+                async with db.execute("SELECT * FROM users WHERE user_id = ?", (user_id,)) as cur:
+                    row = await cur.fetchone()
+                    return False, dict(row) if row else {}
+
+        async with db.execute("SELECT * FROM users WHERE user_id = ?", (user_id,)) as cur:
+            row = await cur.fetchone()
+            user_row = dict(row) if row else {}
+
+        membership_type = user_row.get('membership_type') or 'FREE'
+        pro_expires_at_str = user_row.get('pro_expires_at')
+        is_unlimited = bool(user_row.get('is_unlimited'))
+        window_start_str = user_row.get('quota_window_start')
+        stored_usage = user_row.get('quota_usage', 0)
+
+        def _parse_dt(val):
+            if not val:
+                return None
+            try:
+                dt = datetime.fromisoformat(val)
+                if dt.tzinfo is None:
+                    dt = dt.replace(tzinfo=timezone.utc)
+                return dt
+            except Exception:
+                return None
+
+        pro_expires_at = _parse_dt(pro_expires_at_str)
+        window_start = _parse_dt(window_start_str)
+
+        if is_unlimited:
+            effective = 'UNLIMITED'
+            limit = float('inf')
+        elif pro_expires_at is not None and pro_expires_at > now:
+            effective = 'PRO'
+            limit = float(pro_limit)
+        else:
+            effective = 'FREE'
+            limit = float(free_limit)
+
+        window_duration = timedelta(hours=window_hours)
+
+        if window_start is None or now >= (window_start + window_duration):
+            new_window_start = now
+            new_usage = 1
+            recorded = True
+        else:
+            new_window_start = window_start
+            if limit != float('inf') and stored_usage >= limit:
+                new_usage = stored_usage
+                recorded = False
+            else:
+                new_usage = stored_usage + 1
+                recorded = True
+
+        new_window_start_str = new_window_start.isoformat() if new_window_start else None
+
+        if recorded:
+            await db.execute('''
+                INSERT INTO users (user_id, membership_type, pro_expires_at, is_unlimited, quota_window_start, quota_usage, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                ON CONFLICT(user_id) DO UPDATE SET
+                    membership_type = excluded.membership_type,
+                    pro_expires_at = excluded.pro_expires_at,
+                    is_unlimited = excluded.is_unlimited,
+                    quota_window_start = excluded.quota_window_start,
+                    quota_usage = excluded.quota_usage,
+                    updated_at = CURRENT_TIMESTAMP
+            ''', (user_id, membership_type, pro_expires_at_str, 1 if is_unlimited else 0, new_window_start_str, new_usage))
+            
+            await db.commit()
+            return True, {
+                'user_id': user_id,
+                'membership_type': membership_type,
+                'pro_expires_at': pro_expires_at_str,
+                'is_unlimited': is_unlimited,
+                'quota_window_start': new_window_start_str,
+                'quota_usage': new_usage,
+                'effective_plan': effective,
+                'limit': limit
+            }
+        else:
+            await db.commit()
+            return False, user_row
+
+async def get_user_db(user_id: int) -> Optional[Dict[str, Any]]:
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute("SELECT * FROM users WHERE user_id = ?", (user_id,)) as cursor:
+            row = await cursor.fetchone()
+            return dict(row) if row else None
+
+async def save_user_db(
+    user_id: int,
+    membership_type: str = 'FREE',
+    pro_expires_at: Optional[str] = None,
+    is_unlimited: bool = False,
+    quota_window_start: Optional[str] = None,
+    quota_usage: int = 0
+):
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute('''
+            INSERT INTO users (user_id, membership_type, pro_expires_at, is_unlimited, quota_window_start, quota_usage, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+            ON CONFLICT(user_id) DO UPDATE SET
+                membership_type = excluded.membership_type,
+                pro_expires_at = excluded.pro_expires_at,
+                is_unlimited = excluded.is_unlimited,
+                quota_window_start = excluded.quota_window_start,
+                quota_usage = excluded.quota_usage,
+                updated_at = CURRENT_TIMESTAMP
+        ''', (user_id, membership_type, pro_expires_at, 1 if is_unlimited else 0, quota_window_start, quota_usage))
+        await db.commit()
+
+async def add_job(
+    user_id: int,
+    chat_id: int,
+    message_id: int,
+    url: str,
+    original_message_id: Optional[int] = None
+) -> int:
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute(
+            "INSERT INTO jobs (user_id, chat_id, message_id, original_message_id, url, status) VALUES (?, ?, ?, ?, ?, ?)",
+            (user_id, chat_id, message_id, original_message_id, url, "queued")
         )
         await db.commit()
         return cursor.lastrowid
+
 
 async def update_job_status(job_id: int, status: str, error_reason: Optional[str] = None):
     async with aiosqlite.connect(DB_PATH) as db:
@@ -80,6 +305,11 @@ async def update_job_status(job_id: int, status: str, error_reason: Optional[str
                 "UPDATE jobs SET status = ?, error_reason = ? WHERE id = ?",
                 (status, error_reason, job_id)
             )
+        await db.commit()
+
+async def update_job_message_id(job_id: int, message_id: int):
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("UPDATE jobs SET message_id = ? WHERE id = ?", (message_id, job_id))
         await db.commit()
 
 async def get_job(job_id: int) -> Optional[Dict[str, Any]]:
@@ -197,3 +427,108 @@ async def get_detailed_user_stats() -> List[Dict[str, Any]]:
         """) as cur:
             rows = await cur.fetchall()
             return [dict(row) for row in rows]
+
+async def get_all_queued_jobs() -> List[Dict[str, Any]]:
+    """
+    Returns all jobs with status = 'queued' ordered by id ASC.
+    Used during startup queue reconciliation so SQLite remains the authoritative source of truth.
+    """
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            "SELECT * FROM jobs WHERE status = 'queued' ORDER BY id ASC"
+        ) as cur:
+            rows = await cur.fetchall()
+            return [dict(row) for row in rows]
+
+async def add_admin_db(user_id: int):
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("INSERT OR IGNORE INTO admins (user_id) VALUES (?)", (user_id,))
+        await db.commit()
+
+async def remove_admin_db(user_id: int) -> bool:
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute("DELETE FROM admins WHERE user_id = ?", (user_id,))
+        await db.commit()
+        return cursor.rowcount > 0
+
+async def is_admin_db(user_id: int) -> bool:
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute("SELECT 1 FROM admins WHERE user_id = ?", (user_id,)) as cur:
+            return await cur.fetchone() is not None
+
+async def get_all_admins_db() -> List[int]:
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute("SELECT user_id FROM admins ORDER BY created_at ASC") as cur:
+            rows = await cur.fetchall()
+            return [row[0] for row in rows]
+
+async def get_system_stats() -> Dict[str, Any]:
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        
+        async with db.execute("SELECT COUNT(DISTINCT user_id) FROM (SELECT user_id FROM users UNION SELECT user_id FROM jobs WHERE user_id IS NOT NULL)") as cur:
+            total_users = (await cur.fetchone())[0] or 0
+            
+        now = datetime.now(timezone.utc)
+        
+        async with db.execute("SELECT * FROM users") as cur:
+            user_rows = [dict(r) for r in await cur.fetchall()]
+            
+        free_count = 0
+        pro_count = 0
+        unlim_count = 0
+        
+        users_in_table = set()
+        for u in user_rows:
+            uid = u['user_id']
+            users_in_table.add(uid)
+            is_unlim = bool(u.get('is_unlimited'))
+            exp_str = u.get('pro_expires_at')
+            
+            exp_dt = None
+            if exp_str:
+                try:
+                    exp_dt = datetime.fromisoformat(exp_str)
+                    if exp_dt.tzinfo is None:
+                        exp_dt = exp_dt.replace(tzinfo=timezone.utc)
+                except Exception:
+                    pass
+                    
+            if is_unlim:
+                unlim_count += 1
+            elif exp_dt and exp_dt > now:
+                pro_count += 1
+            else:
+                free_count += 1
+                
+        free_count += max(0, total_users - len(users_in_table))
+        
+        async with db.execute("SELECT COUNT(*) FROM jobs WHERE status = 'success'") as cur:
+            succ_total = (await cur.fetchone())[0] or 0
+            
+        async with db.execute("SELECT COUNT(*) FROM jobs WHERE status = 'success' AND completed_at >= datetime('now', '-24 hours')") as cur:
+            succ_24h = (await cur.fetchone())[0] or 0
+            
+        async with db.execute("SELECT COUNT(*) FROM jobs WHERE status = 'downloading'") as cur:
+            processing = (await cur.fetchone())[0] or 0
+            
+        async with db.execute("SELECT COUNT(*) FROM jobs WHERE status = 'queued'") as cur:
+            queued = (await cur.fetchone())[0] or 0
+            
+        async with db.execute("SELECT COUNT(*) FROM jobs WHERE status = 'failed'") as cur:
+            failed = (await cur.fetchone())[0] or 0
+            
+        return {
+            'total_users': total_users,
+            'free_users': free_count,
+            'pro_users': pro_count,
+            'unlimited_users': unlim_count,
+            'successful_downloads': succ_total,
+            'downloads_24h': succ_24h,
+            'currently_processing': processing,
+            'queued': queued,
+            'failed': failed
+        }
+
+

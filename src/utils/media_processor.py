@@ -24,7 +24,13 @@ async def compress_video(input_path: str, output_path: str) -> bool:
         process = await asyncio.create_subprocess_exec(
             *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
         )
-        _, stderr = await process.communicate()
+        try:
+            _, stderr = await asyncio.wait_for(process.communicate(), timeout=300)
+        except asyncio.TimeoutError:
+            process.kill()
+            await process.wait()
+            logger.error(f"Compression timed out for {input_path}")
+            return False
         
         if process.returncode == 0 and os.path.exists(output_path):
             return True
@@ -57,7 +63,6 @@ async def strip_metadata(file_path: str, is_video: bool) -> bool:
                 tmp_path
             ]
         else:
-            # ffmpeg can also strip metadata from images while keeping the format
             cmd = [
                 "ffmpeg", "-y", "-i", file_path,
                 "-map_metadata", "-1", 
@@ -67,7 +72,15 @@ async def strip_metadata(file_path: str, is_video: bool) -> bool:
         process = await asyncio.create_subprocess_exec(
             *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
         )
-        _, stderr = await process.communicate()
+        try:
+            _, stderr = await asyncio.wait_for(process.communicate(), timeout=300)
+        except asyncio.TimeoutError:
+            process.kill()
+            await process.wait()
+            logger.warning(f"Metadata stripping timed out for {file_path}")
+            if os.path.exists(tmp_path):
+                os.remove(tmp_path)
+            return False
         
         if process.returncode == 0 and os.path.exists(tmp_path):
             os.replace(tmp_path, file_path)

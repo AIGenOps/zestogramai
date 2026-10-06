@@ -21,7 +21,7 @@ COPY src/ ./src/
 USER botuser
 
 # Environment variables
-ENV PYTHONPATH=/app/src
+ENV PYTHONPATH=/app
 EXPOSE 10000
 
 CMD ["python", "-m", "src.bot"]
