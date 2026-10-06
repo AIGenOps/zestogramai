@@ -5,7 +5,7 @@ from telegram.ext import ContextTypes, Application
 from telegram.error import TelegramError
 import json
 import redis.asyncio as aioredis
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 
 from src.config import config
 from src.db import get_job, update_job_status, get_user_settings
