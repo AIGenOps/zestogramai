@@ -7,8 +7,8 @@ def extract_instagram_urls(text: str) -> List[str]:
     Extracts and normalizes valid Instagram URLs from a text message.
     Deduplicates URLs and strips tracking query parameters.
     """
-    # Base pattern matching Instagram domains and YouTube Shorts
-    pattern = r"(https?://(?:www\.)?(?:instagram\.com|instagr\.am|youtube\.com/shorts|youtu\.be)[^\s]*)"
+    # Base pattern matching Instagram domains and YouTube/TikTok/X
+    pattern = r"(https?://(?:www\.|m\.)?(?:instagram\.com|instagr\.am|youtube\.com|youtu\.be|y2u\.be)[^\s]*)"
     raw_matches = re.findall(pattern, text)
     
     valid_urls = []
@@ -41,19 +41,22 @@ def extract_instagram_urls(text: str) -> List[str]:
             
             is_valid_shape = False
             
-            if parsed.netloc == "instagr.am" or parsed.netloc == "youtu.be":
+            if parsed.netloc in ["instagr.am", "youtu.be", "y2u.be", "m.youtube.com"]:
                 is_valid_shape = True
-            elif re.match(r"^/shorts/.*", path):
+            elif re.match(r"^/shorts/.*", path) or re.match(r"^/watch.*", path):
                 is_valid_shape = True
-            elif re.match(r"^/(p|reel|reels|tv)/[^/]+/?", path):
+            elif re.match(r"^/p/[^/]+/?", path) or re.match(r"^/[^/]+/p/[^/]+/?", path):
+                # Posts and carousels are explicitly not supported
+                is_valid_shape = False
+            elif re.match(r"^/(reel|reels|tv)/[^/]+/?", path):
                 is_valid_shape = True
             elif re.match(r"^/stories/[^/]+/[^/]+/?", path):
                 is_valid_shape = True
-            elif re.match(r"^/[^/]+/(p|reel|reels|tv)/[^/]+/?", path):
+            elif re.match(r"^/[^/]+/(reel|reels|tv)/[^/]+/?", path):
                 is_valid_shape = True
             elif re.match(r"^/share/.*", path):
                 is_valid_shape = True
-            elif re.match(r"^/(?!about|developer|explore|help|press|legal|privacy|terms)[^/]+/?$", path):
+            elif re.match(r"^/(?!about|developer|explore|help|press|legal|privacy|terms|p)[^/]+/?$", path):
                 # Potential profile link
                 is_valid_shape = True
                 

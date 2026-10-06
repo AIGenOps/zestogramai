@@ -29,6 +29,16 @@ services:
       interval: 30s
       timeout: 10s
       retries: 3
+    ports:
+      - "${WEBHOOK_PORT:-8443}:${WEBHOOK_PORT:-8443}"
+
+  redis:
+    image: redis:7-alpine
+    container_name: zestogram-redis
+    restart: unless-stopped
+    volumes:
+      - redis-data:/data
 
 volumes:
   bot-api-data:
+  redis-data:

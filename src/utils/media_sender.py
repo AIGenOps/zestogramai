@@ -24,7 +24,12 @@ async def send_downloaded_media(
         caption = caption[:1021] + "..."
 
     # Check cache for simple deduplication
-    cached_file_id = await get_cached_media(url)
+    # Determine if it's purely audio based on the first file or an explicit flag
+    is_audio = False
+    if files and files[0]['path'].lower().endswith(('.mp3', '.m4a', '.wav', '.ogg')):
+        is_audio = True
+        
+    cached_file_id = await get_cached_media(url, is_audio=is_audio)
 
     # Retry wrapper for flood control
     async def _send_with_retry(coro):
@@ -48,17 +53,20 @@ async def send_downloaded_media(
         # Try using cached file_id if available
         if cached_file_id:
             try:
-                if is_video:
+                ext = path.lower()
+                if ext.endswith(('.mp4', '.webm', '.mkv', '.mov', '.avi')):
                     await _send_with_retry(context.bot.send_video(chat_id=chat_id, video=cached_file_id, caption=caption))
+                elif ext.endswith(('.mp3', '.m4a', '.wav', '.ogg')):
+                    await _send_with_retry(context.bot.send_audio(chat_id=chat_id, audio=cached_file_id, caption=caption))
                 else:
                     await _send_with_retry(context.bot.send_photo(chat_id=chat_id, photo=cached_file_id, caption=caption))
                 return
             except TelegramError as e:
                 logger.warning(f"Failed to send cached media (file_id might be invalid), uploading normally: {e}")
         
-        # Standard upload
         with open(path, 'rb') as file_obj:
-            if is_video:
+            ext = path.lower()
+            if ext.endswith(('.mp4', '.webm', '.mkv', '.mov', '.avi')):
                 msg = await _send_with_retry(context.bot.send_video(
                     chat_id=chat_id, 
                     video=file_obj, 
@@ -68,7 +76,18 @@ async def send_downloaded_media(
                     read_timeout=300
                 ))
                 if msg.video:
-                    await cache_media(url, msg.video.file_id)
+                    await cache_media(url, msg.video.file_id, is_audio=is_audio)
+            elif ext.endswith(('.mp3', '.m4a', '.wav', '.ogg')):
+                msg = await _send_with_retry(context.bot.send_audio(
+                    chat_id=chat_id, 
+                    audio=file_obj, 
+                    caption=caption,
+                    write_timeout=300,
+                    connect_timeout=60,
+                    read_timeout=300
+                ))
+                if msg.audio:
+                    await cache_media(url, msg.audio.file_id, is_audio=is_audio)
             else:
                 msg = await _send_with_retry(context.bot.send_photo(
                     chat_id=chat_id, 
@@ -76,7 +95,7 @@ async def send_downloaded_media(
                     caption=caption
                 ))
                 if msg.photo:
-                    await cache_media(url, msg.photo[-1].file_id)
+                    await cache_media(url, msg.photo[-1].file_id, is_audio=is_audio)
     else:
         # Carousel / Media Group
         # Telegram allows max 10 items per media group.
@@ -95,8 +114,12 @@ async def send_downloaded_media(
                     
                     item_caption = caption if (i == 0 and j == 0) else ""
                     
-                    if is_video:
+                    ext = path.lower()
+                    from telegram import InputMediaVideo, InputMediaPhoto, InputMediaAudio
+                    if ext.endswith(('.mp4', '.webm', '.mkv', '.mov', '.avi')):
                         media_group.append(InputMediaVideo(media=file_obj, caption=item_caption))
+                    elif ext.endswith(('.mp3', '.m4a', '.wav', '.ogg')):
+                        media_group.append(InputMediaAudio(media=file_obj, caption=item_caption))
                     else:
                         media_group.append(InputMediaPhoto(media=file_obj, caption=item_caption))
                         
@@ -112,9 +135,11 @@ async def send_downloaded_media(
                 if msgs and i == 0:
                     first_msg = msgs[0]
                     if first_msg.video:
-                        await cache_media(url, first_msg.video.file_id)
+                        await cache_media(url, first_msg.video.file_id, is_audio=is_audio)
+                    elif first_msg.audio:
+                        await cache_media(url, first_msg.audio.file_id, is_audio=is_audio)
                     elif first_msg.photo:
-                        await cache_media(url, first_msg.photo[-1].file_id)
+                        await cache_media(url, first_msg.photo[-1].file_id, is_audio=is_audio)
             finally:
                 for file_obj in open_files:
                     file_obj.close()

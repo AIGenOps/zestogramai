@@ -4,7 +4,7 @@ import logging
 
 from src.utils.access_control import check_access
 from src.db import get_stats, cancel_user_jobs
-from src.queue_manager import job_queue
+from src.queue_manager import get_queue_length
 
 logger = logging.getLogger(__name__)
 
@@ -36,7 +36,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def queue_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await check_access(update, context):
         return
-    depth = job_queue.qsize()
+    depth = await get_queue_length()
     await update.message.reply_text(f"📊 Current queue depth: {depth} pending job(s)")
 
 async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -63,35 +63,29 @@ async def cancel_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("No pending downloads to cancel.")
 
 async def clear_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Attempt to clear recent messages in the chat using bulk deletion."""
+    """Attempt to clear recent messages in the chat by iterating to bypass user message permission errors."""
     if not await check_access(update, context):
         return
         
     chat_id = update.effective_chat.id
     current_msg_id = update.message.message_id
     
-    # Send an initial status message
-    status_msg = await update.message.reply_text("🧹 Attempting to clear recent messages...")
+    status_msg = await update.message.reply_text("🧹 Attempting to clear recent bot messages...")
     
-    # Try to delete the last 100 messages (Telegram limit per request)
-    message_ids_to_delete = list(range(max(1, current_msg_id - 99), current_msg_id + 1))
-    
+    deleted_count = 0
+    # Look back at the last 30 messages to avoid severe rate limits
+    for msg_id in range(current_msg_id, max(0, current_msg_id - 30), -1):
+        try:
+            await context.bot.delete_message(chat_id=chat_id, message_id=msg_id)
+            deleted_count += 1
+        except Exception:
+            # Silently ignore messages we can't delete (like user messages)
+            pass
+            
     try:
-        # We exclude the status message itself so it remains, or we can delete it too.
-        # Let's try to bulk delete
-        await context.bot.delete_messages(chat_id=chat_id, message_ids=message_ids_to_delete)
-        # Send a brief self-destructing success message
-        success_msg = await context.bot.send_message(chat_id=chat_id, text="✅ Chat cleared as much as Telegram allows (last 48 hours).")
-        
-        # Optionally schedule deleting the success message after 3 seconds
-        import asyncio
-        async def delete_later():
-            await asyncio.sleep(3)
-            try:
-                await context.bot.delete_message(chat_id=chat_id, message_id=success_msg.message_id)
-            except Exception:
-                pass
-        asyncio.create_task(delete_later())
-        
-    except Exception as e:
-        await status_msg.edit_text(f"⚠️ Could not completely clear chat. Telegram restricts bots to deleting messages sent within the last 48 hours.\n\nError: {str(e)}")
+        await status_msg.edit_text(
+            f"✅ Cleared {deleted_count} recent bot messages.\n\n"
+            "*(Note: I cannot delete your messages in a private chat. To fully wipe the chat, tap the three dots (⋮) and select Clear History.)*"
+        )
+    except Exception:
+        pass

@@ -2,7 +2,9 @@ import logging
 import asyncio
 import os
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters
-from src.config import config
+from http.server import HTTPServer, BaseHTTPRequestHandler
+import threading
+from src.config import config, get_data_dir
 from src.db import init_db
 from src.queue_manager import start_workers
 from src.handlers.commands import start_command, help_command, queue_command, stats_command, cancel_command, clear_command
@@ -17,7 +19,7 @@ logging.basicConfig(
 )
 
 # Also log to file as requested in spec
-log_dir = "/data/logs"
+log_dir = os.path.join(get_data_dir(), "logs")
 os.makedirs(log_dir, exist_ok=True)
 file_handler = logging.FileHandler(os.path.join(log_dir, "bot.log"))
 file_handler.setFormatter(logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s'))
@@ -25,9 +27,29 @@ logging.getLogger().addHandler(file_handler)
 
 logger = logging.getLogger(__name__)
 
+class HealthCheckHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.send_header("Content-Type", "text/plain")
+        self.end_headers()
+        self.wfile.write(b"Zestogram Telegram Bot is running and healthy!")
+
+    def log_message(self, format, *args):
+        pass
+
+def start_health_server(port: int):
+    try:
+        server = HTTPServer(("0.0.0.0", port), HealthCheckHandler)
+        logger.info(f"Render Health Check HTTP server started on 0.0.0.0:{port}")
+        server.serve_forever()
+    except Exception as e:
+        logger.warning(f"Could not start HTTP health server on port {port}: {e}")
+
 async def post_init(application):
+    from src.cleanup import cleanup_loop
     await init_db()
     await start_workers(application)
+    asyncio.create_task(cleanup_loop())
     
     # Register commands for auto-complete menu
     commands = [
@@ -37,6 +59,8 @@ async def post_init(application):
         BotCommand("audio", "Toggle audio-only mode"),
         BotCommand("queue", "Check download queue status"),
         BotCommand("stats", "View bot download statistics"),
+        BotCommand("users", "Admin: View total unique users"),
+        BotCommand("health", "Admin: View server health stats"),
         BotCommand("cancel", "Cancel your pending queued jobs"),
         BotCommand("clear", "Clear recent messages in chat")
     ]
@@ -73,13 +97,36 @@ def main():
     app.add_handler(CommandHandler("cancel", cancel_command))
     app.add_handler(CommandHandler("clear", clear_command))
     
+    from src.handlers.admin import users_command, ban_command, unban_command, health_command
+    app.add_handler(CommandHandler("users", users_command))
+    app.add_handler(CommandHandler("ban", ban_command))
+    app.add_handler(CommandHandler("unban", unban_command))
+    app.add_handler(CommandHandler("health", health_command))
+    
     from telegram.ext import CallbackQueryHandler
-    app.add_handler(CallbackQueryHandler(settings_callback))
+    from src.handlers.convert_handler import convert_callback
+    app.add_handler(CallbackQueryHandler(settings_callback, pattern="^(toggle_auto_cleanup|settings_done)$"))
+    app.add_handler(CallbackQueryHandler(convert_callback, pattern="^convert_to:"))
     
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+    app.add_handler(MessageHandler((filters.TEXT | filters.Document.ALL | filters.VIDEO | filters.AUDIO) & ~filters.COMMAND, handle_message))
     
-    logger.info("Bot is starting up...")
-    app.run_polling(drop_pending_updates=True)
+    # Start HTTP server on PORT for Render web service health check & keep-awake cron pinging
+    port = int(os.getenv("PORT", config.port or 10000))
+    health_thread = threading.Thread(target=start_health_server, args=(port,), daemon=True)
+    health_thread.start()
+
+    if config.webhook_url:
+        logger.info(f"Starting webhook on {config.webhook_url} (port {config.webhook_port})")
+        app.run_webhook(
+            listen="0.0.0.0",
+            port=config.webhook_port,
+            url_path=config.telegram_bot_token,
+            webhook_url=f"{config.webhook_url.rstrip('/')}/{config.telegram_bot_token}",
+            drop_pending_updates=True
+        )
+    else:
+        logger.info("Bot is starting up in polling mode...")
+        app.run_polling(drop_pending_updates=True)
 
 if __name__ == "__main__":
     main()

@@ -10,10 +10,11 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Create a non-root user and give ownership of the data directory
+# Create a non-root user and give full permissions on /data directory
 RUN useradd -m botuser && \
-    mkdir -p /data && \
-    chown botuser:botuser /data
+    mkdir -p /data/tmp /data/downloads /data/logs && \
+    chown -R botuser:botuser /data && \
+    chmod -R 777 /data
 
 COPY src/ ./src/
 
@@ -21,5 +22,6 @@ USER botuser
 
 # Environment variables
 ENV PYTHONPATH=/app/src
+EXPOSE 10000
 
 CMD ["python", "-m", "src.bot"]

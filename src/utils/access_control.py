@@ -2,7 +2,7 @@ from telegram import Update
 from telegram.ext import ContextTypes
 import logging
 from src.config import config
-from src.db import check_rate_limit, record_rate_limit
+from src.db import check_rate_limit, record_rate_limit, is_user_banned
 
 logger = logging.getLogger(__name__)
 
@@ -38,6 +38,10 @@ async def check_access(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bo
     if not await is_chat_allowed(chat_id):
         logger.info(f"Unauthorized access attempt in chat {chat_id}")
         await context.bot.send_message(chat_id=chat_id, text="⛔ This chat is not authorized to use this bot.")
+        return False
+        
+    if await is_user_banned(user_id):
+        logger.info(f"Banned user access attempt by {user_id}")
         return False
         
     return True

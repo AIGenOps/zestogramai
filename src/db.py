@@ -3,11 +3,19 @@ import asyncio
 from typing import Optional, List, Dict, Any
 import os
 
-# Can be overridden for tests
-DB_PATH = os.getenv("DB_PATH", "/data/bot.db")
+from src.config import get_data_dir
+
+def get_db_path() -> str:
+    env_path = os.getenv("DB_PATH")
+    if env_path:
+        return env_path
+    return os.path.join(get_data_dir(), "bot.db")
+
+DB_PATH = get_db_path()
 
 async def init_db():
-    # Ensure directory exists
+    global DB_PATH
+    DB_PATH = get_db_path()
     os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute('''
@@ -41,6 +49,12 @@ async def init_db():
                 user_id INTEGER PRIMARY KEY,
                 audio_only BOOLEAN DEFAULT 0,
                 auto_cleanup BOOLEAN DEFAULT 0
+            )
+        ''')
+        await db.execute('''
+            CREATE TABLE IF NOT EXISTS banned_users (
+                user_id INTEGER PRIMARY KEY,
+                banned_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         ''')
         await db.commit()
@@ -91,14 +105,16 @@ async def check_rate_limit(user_id: int, max_per_minute: int) -> bool:
             count = (await cursor.fetchone())[0]
             return count < max_per_minute
 
-async def cache_media(url: str, file_id: str):
+async def cache_media(url: str, file_id: str, is_audio: bool = False):
+    cache_key = f"{url}_audio" if is_audio else url
     async with aiosqlite.connect(DB_PATH) as db:
-        await db.execute("INSERT OR REPLACE INTO cached_media (url, file_id) VALUES (?, ?)", (url, file_id))
+        await db.execute("INSERT OR REPLACE INTO cached_media (url, file_id) VALUES (?, ?)", (cache_key, file_id))
         await db.commit()
 
-async def get_cached_media(url: str) -> Optional[str]:
+async def get_cached_media(url: str, is_audio: bool = False) -> Optional[str]:
+    cache_key = f"{url}_audio" if is_audio else url
     async with aiosqlite.connect(DB_PATH) as db:
-        async with db.execute("SELECT file_id FROM cached_media WHERE url = ?", (url,)) as cursor:
+        async with db.execute("SELECT file_id FROM cached_media WHERE url = ?", (cache_key,)) as cursor:
             row = await cursor.fetchone()
             return row[0] if row else None
 
@@ -144,3 +160,23 @@ async def update_user_setting(user_id: int, setting_key: str, value: bool):
         )
         await db.commit()
 
+async def is_user_banned(user_id: int) -> bool:
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute("SELECT 1 FROM banned_users WHERE user_id = ?", (user_id,)) as cur:
+            return await cur.fetchone() is not None
+
+async def ban_user(user_id: int):
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("INSERT OR IGNORE INTO banned_users (user_id) VALUES (?)", (user_id,))
+        await db.commit()
+
+async def unban_user(user_id: int):
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("DELETE FROM banned_users WHERE user_id = ?", (user_id,))
+        await db.commit()
+
+async def get_unique_users_count() -> int:
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute("SELECT COUNT(DISTINCT user_id) FROM jobs") as cur:
+            row = await cur.fetchone()
+            return row[0] if row else 0

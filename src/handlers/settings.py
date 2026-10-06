@@ -10,11 +10,9 @@ logger = logging.getLogger(__name__)
 async def _build_settings_keyboard(user_id: int) -> InlineKeyboardMarkup:
     settings = await get_user_settings(user_id)
     
-    audio_only_text = "✅ Audio Only" if settings.get("audio_only") else "❌ Audio Only"
     cleanup_text = "✅ Auto-Cleanup" if settings.get("auto_cleanup") else "❌ Auto-Cleanup"
     
     keyboard = [
-        [InlineKeyboardButton(audio_only_text, callback_data="toggle_audio_only")],
         [InlineKeyboardButton(cleanup_text, callback_data="toggle_auto_cleanup")],
         [InlineKeyboardButton("Done", callback_data="settings_done")]
     ]
@@ -34,20 +32,49 @@ async def settings_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 async def audio_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Shortcut command for /audio"""
+    """Download audio directly from a provided URL."""
     if not await check_access(update, context):
         return
         
     user_id = update.effective_user.id
-    settings = await get_user_settings(user_id)
-    new_val = not settings.get("audio_only")
     
-    await update_user_setting(user_id, "audio_only", new_val)
+    if not context.args:
+        await update.message.reply_text("Usage: `/audio <url>` to download just the audio from a link.", parse_mode="Markdown")
+        return
+        
+    from src.link_extractor import extract_instagram_urls
+    from src.db import add_job
+    from src.queue_manager import enqueue_job
+    from src.utils.access_control import enforce_rate_limit
     
-    if new_val:
-        await update.message.reply_text("🎧 Audio Only mode **enabled**. Future downloads will be MP3s.", parse_mode="Markdown")
-    else:
-        await update.message.reply_text("📹 Audio Only mode **disabled**. Future downloads will be videos.", parse_mode="Markdown")
+    text = " ".join(context.args)
+    urls = extract_instagram_urls(text)
+    
+    if not urls:
+        await update.message.reply_text("Please provide a valid Instagram or YouTube link after /audio.")
+        return
+        
+    chat_id = update.effective_chat.id
+    for url in urls:
+        if not await enforce_rate_limit(user_id):
+            await update.message.reply_text("⚠️ Rate limit exceeded. Please wait a minute before sending more links.")
+            break
+            
+        status_msg = await update.message.reply_text(
+            f"📥 Queued for Audio Extraction"
+        )
+        
+        job_id = await add_job(user_id, chat_id, status_msg.message_id, url)
+        
+        await enqueue_job({
+            'job_id': job_id,
+            'user_id': user_id,
+            'chat_id': chat_id,
+            'url': url,
+            'message_id': status_msg.message_id,
+            'original_message_id': update.message.message_id,
+            'force_audio': True
+        })
 
 async def settings_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -62,10 +89,7 @@ async def settings_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
     settings = await get_user_settings(user_id)
     
-    if data == "toggle_audio_only":
-        new_val = not settings.get("audio_only")
-        await update_user_setting(user_id, "audio_only", new_val)
-    elif data == "toggle_auto_cleanup":
+    if data == "toggle_auto_cleanup":
         new_val = not settings.get("auto_cleanup")
         await update_user_setting(user_id, "auto_cleanup", new_val)
         

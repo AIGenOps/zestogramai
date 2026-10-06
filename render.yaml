@@ -1,0 +1,16 @@
+services:
+  - type: web
+    name: zestogram-bot
+    env: docker
+    plan: free
+    region: oregon
+    healthCheckPath: /
+    envVars:
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: USE_LOCAL_BOT_API
+        value: "false"
+      - key: MAX_CONCURRENT_DOWNLOADS
+        value: "2"
+      - key: LOG_LEVEL
+        value: "INFO"

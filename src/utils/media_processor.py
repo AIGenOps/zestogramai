@@ -41,12 +41,19 @@ async def strip_metadata(file_path: str, is_video: bool) -> bool:
     For videos, uses ffmpeg. For images, we can use ffmpeg or Pillow. 
     Here we'll use ffmpeg for both for simplicity and reliability if it works, or fallback.
     """
-    tmp_path = file_path + ".nometa"
+    ext = os.path.splitext(file_path)[1]
+    tmp_path = file_path + ".nometa" + ext
     try:
         if is_video:
             cmd = [
                 "ffmpeg", "-y", "-i", file_path,
                 "-map_metadata", "-1", "-c:v", "copy", "-c:a", "copy",
+                tmp_path
+            ]
+        elif file_path.lower().endswith(('.mp3', '.m4a', '.wav', '.ogg')):
+            cmd = [
+                "ffmpeg", "-y", "-i", file_path,
+                "-map_metadata", "-1", "-c:a", "copy",
                 tmp_path
             ]
         else:
