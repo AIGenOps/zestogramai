@@ -34,12 +34,11 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if file_id:
         from telegram import InlineKeyboardButton, InlineKeyboardMarkup
         keyboard = [
-            [InlineKeyboardButton("🎥 Convert to MP4", callback_data="convert_to:mp4")],
-            [InlineKeyboardButton("🎵 Convert to MP3", callback_data="convert_to:mp3")]
+            [InlineKeyboardButton("🎥 Convert to MP4 Video", callback_data="convert_to:mp4")]
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
         await msg.reply_text(
-            f"File detected: `{file_name}`\nWhat would you like to convert it to?",
+            f"File detected: `{file_name}`\nWould you like to convert it to standard MP4 video format?",
             reply_markup=reply_markup,
             parse_mode="Markdown",
             reply_to_message_id=msg.message_id
@@ -51,15 +50,18 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not text:
         return
 
+    user_id = update.effective_user.id
+    chat_id = update.effective_chat.id
+
     # Check for reply keyboard button clicks
     clean_text = text.strip()
-    if clean_text in ("⚙️ Settings", "settings"):
-        from src.handlers.settings import settings_command
-        await settings_command(update, context)
+    if clean_text in ("👥 Users", "users"):
+        from src.handlers.admin import users_command
+        await users_command(update, context)
         return
-    elif clean_text in ("🎵 Toggle Audio", "🎵 Audio Mode", "audio"):
-        from src.handlers.settings import audio_command
-        await audio_command(update, context)
+    elif clean_text in ("🖥 System Health", "health"):
+        from src.handlers.admin import health_command
+        await health_command(update, context)
         return
     elif clean_text in ("📊 Stats", "stats"):
         from src.handlers.commands import stats_command
@@ -69,6 +71,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         from src.handlers.commands import queue_command
         await queue_command(update, context)
         return
+    elif clean_text in ("⚙️ Settings", "settings"):
+        from src.handlers.settings import settings_command
+        await settings_command(update, context)
+        return
     elif clean_text in ("❓ Help", "help"):
         from src.handlers.commands import help_command
         await help_command(update, context)
@@ -77,9 +83,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         from src.handlers.commands import cancel_command
         await cancel_command(update, context)
         return
-        
-    user_id = update.effective_user.id
-    chat_id = update.effective_chat.id
+    elif clean_text in ("🧹 Clear Chat", "clear"):
+        from src.handlers.commands import clear_command
+        await clear_command(update, context)
+        return
     
     urls = extract_instagram_urls(text)
     
@@ -87,8 +94,11 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if "/p/" in text:
             await update.message.reply_text("Instagram posts and carousels are no longer supported. Please send Reels only.")
         else:
-            from src.utils.keyboard import get_main_reply_keyboard
-            await update.message.reply_text("Please send a valid link (Instagram, YouTube, etc).", reply_markup=get_main_reply_keyboard())
+            from src.utils.keyboard import get_reply_keyboard_for_user
+            await update.message.reply_text(
+                "Please send a valid video link (Instagram Reel, YouTube Short/Video, etc).",
+                reply_markup=get_reply_keyboard_for_user(user_id)
+            )
         return
         
     status_msg = await update.message.reply_text(

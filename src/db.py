@@ -180,3 +180,20 @@ async def get_unique_users_count() -> int:
         async with db.execute("SELECT COUNT(DISTINCT user_id) FROM jobs") as cur:
             row = await cur.fetchone()
             return row[0] if row else 0
+
+async def get_detailed_user_stats() -> List[Dict[str, Any]]:
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute("""
+            SELECT 
+                user_id, 
+                COUNT(*) as total_requests,
+                SUM(CASE WHEN status = 'success' THEN 1 ELSE 0 END) as successful_downloads,
+                MAX(created_at) as last_active
+            FROM jobs 
+            WHERE user_id IS NOT NULL 
+            GROUP BY user_id 
+            ORDER BY total_requests DESC
+        """) as cur:
+            rows = await cur.fetchall()
+            return [dict(row) for row in rows]

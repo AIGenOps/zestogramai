@@ -8,7 +8,7 @@ from src.config import config, get_data_dir
 from src.db import init_db
 from src.queue_manager import start_workers
 from src.handlers.commands import start_command, help_command, queue_command, stats_command, cancel_command, clear_command
-from src.handlers.settings import settings_command, audio_command, settings_callback
+from src.handlers.settings import settings_command, settings_callback
 from src.handlers.message_handler import handle_message
 from telegram import BotCommand
 
@@ -51,18 +51,12 @@ async def post_init(application):
     await start_workers(application)
     asyncio.create_task(cleanup_loop())
     
-    # Register commands for auto-complete menu
+    # Register default commands for auto-complete menu (general users)
     commands = [
-        BotCommand("start", "Greeting and basic info"),
-        BotCommand("help", "List of commands and instructions"),
-        BotCommand("settings", "Interactive settings menu"),
-        BotCommand("audio", "Toggle audio-only mode"),
-        BotCommand("queue", "Check download queue status"),
-        BotCommand("stats", "View bot download statistics"),
-        BotCommand("users", "Admin: View total unique users"),
-        BotCommand("health", "Admin: View server health stats"),
-        BotCommand("cancel", "Cancel your pending queued jobs"),
-        BotCommand("clear", "Clear recent messages in chat")
+        BotCommand("start", "Start bot and show menu"),
+        BotCommand("help", "Help guide & instructions"),
+        BotCommand("cancel", "Cancel your pending download jobs"),
+        BotCommand("clear", "Clear recent bot messages in chat")
     ]
     try:
         await application.bot.set_my_commands(commands)
@@ -91,7 +85,6 @@ def main():
     app.add_handler(CommandHandler("start", start_command))
     app.add_handler(CommandHandler("help", help_command))
     app.add_handler(CommandHandler("settings", settings_command))
-    app.add_handler(CommandHandler("audio", audio_command))
     app.add_handler(CommandHandler("queue", queue_command))
     app.add_handler(CommandHandler("stats", stats_command))
     app.add_handler(CommandHandler("cancel", cancel_command))

@@ -40,15 +40,8 @@ async def process_conversion(bot: Bot, job_id: int, url: str) -> list:
                 output_path
             ]
             is_video = True
-        elif target_format == "mp3":
-            cmd = [
-                'ffmpeg', '-y', '-i', input_path,
-                '-vn', '-c:a', 'libmp3lame', '-q:a', '2',
-                output_path
-            ]
-            is_video = False
         else:
-            raise DownloadError(f"Unsupported conversion format: {target_format}", retryable=False)
+            raise DownloadError(f"Unsupported conversion format: {target_format}. Only MP4 video is supported.", retryable=False)
             
         process = await asyncio.create_subprocess_exec(
             *cmd,

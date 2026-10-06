@@ -5,34 +5,59 @@ import logging
 from src.utils.access_control import check_access
 from src.db import get_stats, cancel_user_jobs
 from src.queue_manager import get_queue_length
-from src.utils.keyboard import get_main_reply_keyboard
+from src.utils.keyboard import get_reply_keyboard_for_user
+from src.handlers.admin import is_admin
 
 logger = logging.getLogger(__name__)
 
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await check_access(update, context):
         return
+    user_id = update.effective_user.id
     await update.message.reply_text(
-        "👋 Welcome to Zestogram!\n\n"
-        "Send me one or more Instagram links and I'll download them for you.\n"
+        "👋 Welcome to Zestogram Video Downloader!\n\n"
+        "Send me one or more video links (Instagram Reels, YouTube Shorts/Videos) and I'll download them for you in high quality.\n\n"
         "Use the quick menu buttons below or send /help to see all commands.",
-        reply_markup=get_main_reply_keyboard()
+        reply_markup=get_reply_keyboard_for_user(user_id)
     )
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await check_access(update, context):
         return
+    user_id = update.effective_user.id
+    
+    if is_admin(user_id):
+        help_text = (
+            "📚 *Help & Admin Commands*\n\n"
+            "Just send a link to download videos (Reels, Shorts, Videos).\n\n"
+            "*General Commands:*\n"
+            "• `/start` - Start bot and show menu\n"
+            "• `/help` - Show this help guide\n"
+            "• `/cancel` - Cancel pending queued jobs\n"
+            "• `/clear` - Clear recent bot messages\n\n"
+            "*Admin Commands:*\n"
+            "• `/users` - View detailed user usage stats\n"
+            "• `/health` - System CPU, RAM, Disk health\n"
+            "• `/stats` - Total bot success & failure stats\n"
+            "• `/queue` - Check active download queue depth\n"
+            "• `/ban <user_id>` - Ban user from bot\n"
+            "• `/unban <user_id>` - Unban user"
+        )
+    else:
+        help_text = (
+            "📚 *Help & Commands*\n\n"
+            "Just send a link to download videos (Instagram Reels, YouTube Shorts/Videos).\n\n"
+            "*Available Commands:*\n"
+            "• `/start` - Start bot and show menu\n"
+            "• `/help` - Show this help guide\n"
+            "• `/cancel` - Cancel your pending downloads\n"
+            "• `/clear` - Clear recent bot messages in chat"
+        )
+        
     await update.message.reply_text(
-        "📚 *Help & Commands*\n\n"
-        "Just send a message containing an Instagram link (like a Reel or Post).\n\n"
-        "Commands / Quick Buttons:\n"
-        "⚙️ /settings - Interactive settings menu\n"
-        "🎵 /audio - Toggle audio-only mode\n"
-        "📋 /queue - Check queue depth\n"
-        "📊 /stats - View download stats\n"
-        "🛑 /cancel - Cancel your pending queued jobs",
+        help_text,
         parse_mode="Markdown",
-        reply_markup=get_main_reply_keyboard()
+        reply_markup=get_reply_keyboard_for_user(user_id)
     )
 
 async def queue_command(update: Update, context: ContextTypes.DEFAULT_TYPE):

