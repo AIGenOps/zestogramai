@@ -5,6 +5,7 @@ import logging
 from src.utils.access_control import check_access
 from src.db import get_stats, cancel_user_jobs
 from src.queue_manager import get_queue_length
+from src.utils.keyboard import get_main_reply_keyboard
 
 logger = logging.getLogger(__name__)
 
@@ -14,8 +15,8 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "👋 Welcome to Zestogram!\n\n"
         "Send me one or more Instagram links and I'll download them for you.\n"
-        "Supports Reels, Posts, Carousels, IGTV, and Stories.\n\n"
-        "Send /help to see all commands."
+        "Use the quick menu buttons below or send /help to see all commands.",
+        reply_markup=get_main_reply_keyboard()
     )
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -24,13 +25,14 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "📚 *Help & Commands*\n\n"
         "Just send a message containing an Instagram link (like a Reel or Post).\n\n"
-        "Commands:\n"
-        "/start - Greeting\n"
-        "/help - Show this message\n"
-        "/queue - Check queue depth\n"
-        "/stats - View download stats\n"
-        "/cancel - Cancel your pending queued jobs",
-        parse_mode="Markdown"
+        "Commands / Quick Buttons:\n"
+        "⚙️ /settings - Interactive settings menu\n"
+        "🎵 /audio - Toggle audio-only mode\n"
+        "📋 /queue - Check queue depth\n"
+        "📊 /stats - View download stats\n"
+        "🛑 /cancel - Cancel your pending queued jobs",
+        parse_mode="Markdown",
+        reply_markup=get_main_reply_keyboard()
     )
 
 async def queue_command(update: Update, context: ContextTypes.DEFAULT_TYPE):

@@ -50,11 +50,34 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = msg.text
     if not text:
         return
-        
-    if not await check_access(update, context):
-        return
 
-    text = update.message.text
+    # Check for reply keyboard button clicks
+    clean_text = text.strip()
+    if clean_text in ("⚙️ Settings", "settings"):
+        from src.handlers.settings import settings_command
+        await settings_command(update, context)
+        return
+    elif clean_text in ("🎵 Toggle Audio", "🎵 Audio Mode", "audio"):
+        from src.handlers.settings import audio_command
+        await audio_command(update, context)
+        return
+    elif clean_text in ("📊 Stats", "stats"):
+        from src.handlers.commands import stats_command
+        await stats_command(update, context)
+        return
+    elif clean_text in ("📋 Queue Depth", "📋 Queue", "queue"):
+        from src.handlers.commands import queue_command
+        await queue_command(update, context)
+        return
+    elif clean_text in ("❓ Help", "help"):
+        from src.handlers.commands import help_command
+        await help_command(update, context)
+        return
+    elif clean_text in ("🛑 Cancel Jobs", "🛑 Cancel", "cancel"):
+        from src.handlers.commands import cancel_command
+        await cancel_command(update, context)
+        return
+        
     user_id = update.effective_user.id
     chat_id = update.effective_chat.id
     
@@ -64,7 +87,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if "/p/" in text:
             await update.message.reply_text("Instagram posts and carousels are no longer supported. Please send Reels only.")
         else:
-            await update.message.reply_text("Please send a valid link (Instagram, YouTube, etc).")
+            from src.utils.keyboard import get_main_reply_keyboard
+            await update.message.reply_text("Please send a valid link (Instagram, YouTube, etc).", reply_markup=get_main_reply_keyboard())
         return
         
     status_msg = await update.message.reply_text(
