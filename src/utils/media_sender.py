@@ -3,7 +3,7 @@ from telegram.ext import ContextTypes
 from telegram.error import TelegramError, RetryAfter
 import logging
 import asyncio
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 from src.config import config
 from src.db import cache_media, get_cached_media
 
