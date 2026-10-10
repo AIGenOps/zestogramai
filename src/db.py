@@ -78,6 +78,23 @@ async def init_db():
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         ''')
+        from src.config import config
+        for admin_id in config.parsed_admin_user_ids:
+            await db.execute("INSERT OR IGNORE INTO admins (user_id) VALUES (?)", (admin_id,))
+        if config.owner_id:
+            await db.execute("INSERT OR IGNORE INTO admins (user_id) VALUES (?)", (config.owner_id,))
+
+        await db.execute('''
+            CREATE TABLE IF NOT EXISTS admin_mode_users (
+                user_id INTEGER PRIMARY KEY,
+                status TEXT NOT NULL DEFAULT 'NONE',
+                current_mode TEXT NOT NULL DEFAULT 'NORMAL',
+                topic_id INTEGER,
+                user_name TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
 
         async with db.execute("PRAGMA table_info(jobs)") as cursor:
             columns = [row[1] for row in await cursor.fetchall()]
@@ -85,6 +102,10 @@ async def init_db():
                 await db.execute("ALTER TABLE jobs ADD COLUMN quota_recorded INTEGER DEFAULT 0")
             if 'original_message_id' not in columns:
                 await db.execute("ALTER TABLE jobs ADD COLUMN original_message_id INTEGER")
+            if 'target_chat_id' not in columns:
+                await db.execute("ALTER TABLE jobs ADD COLUMN target_chat_id INTEGER")
+            if 'message_thread_id' not in columns:
+                await db.execute("ALTER TABLE jobs ADD COLUMN message_thread_id INTEGER")
 
         
         # Recover stale downloading jobs from previous process crash/restart
@@ -282,12 +303,15 @@ async def add_job(
     chat_id: int,
     message_id: int,
     url: str,
-    original_message_id: Optional[int] = None
+    original_message_id: Optional[int] = None,
+    target_chat_id: Optional[int] = None,
+    message_thread_id: Optional[int] = None,
+    status: str = "queued"
 ) -> int:
     async with aiosqlite.connect(DB_PATH) as db:
         cursor = await db.execute(
-            "INSERT INTO jobs (user_id, chat_id, message_id, original_message_id, url, status) VALUES (?, ?, ?, ?, ?, ?)",
-            (user_id, chat_id, message_id, original_message_id, url, "queued")
+            "INSERT INTO jobs (user_id, chat_id, message_id, original_message_id, url, target_chat_id, message_thread_id, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (user_id, chat_id, message_id, original_message_id, url, target_chat_id, message_thread_id, status)
         )
         await db.commit()
         return cursor.lastrowid
@@ -351,7 +375,7 @@ async def get_cached_media(url: str, is_audio: bool = False) -> Optional[str]:
 async def cancel_user_jobs(user_id: int) -> int:
     async with aiosqlite.connect(DB_PATH) as db:
         cursor = await db.execute(
-            "UPDATE jobs SET status = 'cancelled', error_reason = 'Cancelled by user' WHERE user_id = ? AND status = 'queued'",
+            "UPDATE jobs SET status = 'cancelled', error_reason = 'Cancelled by user', completed_at = CURRENT_TIMESTAMP WHERE user_id = ? AND status IN ('queued', 'pending_approval')",
             (user_id,)
         )
         await db.commit()
@@ -530,5 +554,119 @@ async def get_system_stats() -> Dict[str, Any]:
             'queued': queued,
             'failed': failed
         }
+
+async def get_admin_mode_user(user_id: int) -> Optional[Dict[str, Any]]:
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute("SELECT * FROM admin_mode_users WHERE user_id = ?", (user_id,)) as cursor:
+            row = await cursor.fetchone()
+            return dict(row) if row else None
+
+async def upsert_admin_mode_user(
+    user_id: int,
+    status: str = "NONE",
+    current_mode: str = "NORMAL",
+    topic_id: Optional[int] = None,
+    user_name: Optional[str] = None
+):
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute('''
+            INSERT INTO admin_mode_users (user_id, status, current_mode, topic_id, user_name, updated_at)
+            VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+            ON CONFLICT(user_id) DO UPDATE SET
+                status = excluded.status,
+                current_mode = excluded.current_mode,
+                topic_id = COALESCE(excluded.topic_id, admin_mode_users.topic_id),
+                user_name = COALESCE(excluded.user_name, admin_mode_users.user_name),
+                updated_at = CURRENT_TIMESTAMP
+        ''', (user_id, status, current_mode, topic_id, user_name))
+        await db.commit()
+
+async def update_admin_mode_status(
+    user_id: int,
+    status: str,
+    current_mode: Optional[str] = None,
+    topic_id: Optional[int] = None,
+    clear_topic: bool = False
+):
+    async with aiosqlite.connect(DB_PATH) as db:
+        if clear_topic:
+            if current_mode is not None:
+                await db.execute(
+                    "UPDATE admin_mode_users SET status = ?, current_mode = ?, topic_id = NULL, updated_at = CURRENT_TIMESTAMP WHERE user_id = ?",
+                    (status, current_mode, user_id)
+                )
+            else:
+                await db.execute(
+                    "UPDATE admin_mode_users SET status = ?, topic_id = NULL, updated_at = CURRENT_TIMESTAMP WHERE user_id = ?",
+                    (status, user_id)
+                )
+        elif current_mode is not None and topic_id is not None:
+            await db.execute(
+                "UPDATE admin_mode_users SET status = ?, current_mode = ?, topic_id = ?, updated_at = CURRENT_TIMESTAMP WHERE user_id = ?",
+                (status, current_mode, topic_id, user_id)
+            )
+        elif current_mode is not None:
+            await db.execute(
+                "UPDATE admin_mode_users SET status = ?, current_mode = ?, updated_at = CURRENT_TIMESTAMP WHERE user_id = ?",
+                (status, current_mode, user_id)
+            )
+        elif topic_id is not None:
+            await db.execute(
+                "UPDATE admin_mode_users SET status = ?, topic_id = ?, updated_at = CURRENT_TIMESTAMP WHERE user_id = ?",
+                (status, topic_id, user_id)
+            )
+        else:
+            await db.execute(
+                "UPDATE admin_mode_users SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE user_id = ?",
+                (status, user_id)
+            )
+        await db.commit()
+
+async def update_admin_mode_current_mode(user_id: int, current_mode: str):
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            "UPDATE admin_mode_users SET current_mode = ?, updated_at = CURRENT_TIMESTAMP WHERE user_id = ?",
+            (current_mode, user_id)
+        )
+        await db.commit()
+
+async def get_pending_submission_jobs(user_id: int) -> List[Dict[str, Any]]:
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            "SELECT * FROM jobs WHERE user_id = ? AND status = 'pending_approval' ORDER BY id ASC",
+            (user_id,)
+        ) as cursor:
+            rows = await cursor.fetchall()
+            return [dict(r) for r in rows]
+
+async def cancel_pending_submission_jobs(user_id: int) -> int:
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute(
+            "UPDATE jobs SET status = 'cancelled', error_reason = 'Submission request declined', completed_at = CURRENT_TIMESTAMP WHERE user_id = ? AND status = 'pending_approval'",
+            (user_id,)
+        )
+        await db.commit()
+        return cursor.rowcount
+
+async def activate_pending_submission_jobs(
+    user_id: int,
+    target_chat_id: int,
+    message_thread_id: int
+) -> List[Dict[str, Any]]:
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        await db.execute(
+            "UPDATE jobs SET status = 'queued', target_chat_id = ?, message_thread_id = ? WHERE user_id = ? AND status = 'pending_approval'",
+            (target_chat_id, message_thread_id, user_id)
+        )
+        await db.commit()
+        async with db.execute(
+            "SELECT * FROM jobs WHERE user_id = ? AND status = 'queued' AND target_chat_id = ? AND message_thread_id = ? ORDER BY id ASC",
+            (user_id, target_chat_id, message_thread_id)
+        ) as cursor:
+            rows = await cursor.fetchall()
+            return [dict(r) for r in rows]
 
 

@@ -43,6 +43,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         from src.handlers.commands import clear_command
         await clear_command(update, context)
         return
+    elif clean_text in ("👑 Admin", "admin", "/admin"):
+        from src.handlers.admin import admin_command
+        await admin_command(update, context)
+        return
     elif clean_text in ("👥 Users", "users"):
         from src.handlers.admin import users_command
         await users_command(update, context)
@@ -63,6 +67,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         from src.handlers.settings import settings_command
         await settings_command(update, context)
         return
+    elif clean_text in ("🔄 Mode", "mode", "/mode"):
+        from src.handlers.admin_mode_handler import mode_command
+        await mode_command(update, context)
+        return
     
     supported_urls, unsupported_urls = parse_text_urls(text)
     
@@ -73,12 +81,71 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("Send me an Instagram Reel or YouTube Short link and I'll download it for you.")
         return
 
+    from src.services.admin_mode import get_admin_mode_state
+    from src.config import config
+    admin_state = await get_admin_mode_state(user_id)
+    is_admin_mode = (admin_state.get("current_mode") == "ADMIN")
+    admin_status = admin_state.get("status")
+    topic_id = admin_state.get("topic_id")
+
     # Process supported URLs
     for url in supported_urls:
         if not await enforce_rate_limit(user_id):
             await update.message.reply_text("Rate limit exceeded. Please wait a minute before sending more links.")
             break
-            
+
+        if is_admin_mode:
+            if admin_status == "PENDING":
+                # User's request is pending approval: queue job without deducting quota, paused
+                job_id = await add_job(
+                    user_id=user_id,
+                    chat_id=chat_id,
+                    message_id=0,
+                    url=url,
+                    original_message_id=update.message.message_id,
+                    target_chat_id=config.admin_forum_group_id,
+                    message_thread_id=topic_id,
+                    status="pending_approval"
+                )
+                await update.message.reply_text("⏳ Your submission has been queued and is waiting for admin approval.")
+                continue
+
+            elif admin_status == "APPROVED":
+                # Approved admin mode: bypass normal quota limits, send directly to admin topic
+                job_id = await add_job(
+                    user_id=user_id,
+                    chat_id=chat_id,
+                    message_id=0,
+                    url=url,
+                    original_message_id=update.message.message_id,
+                    target_chat_id=config.admin_forum_group_id,
+                    message_thread_id=topic_id,
+                    status="queued"
+                )
+                processing_msg = await update.message.reply_text("Processing reel for admin submission...")
+                msg_id = getattr(processing_msg, 'message_id', None)
+                if isinstance(msg_id, int):
+                    await update_job_message_id(job_id, msg_id)
+
+                try:
+                    await enqueue_job({
+                        'job_id': job_id,
+                        'user_id': user_id,
+                        'chat_id': chat_id,
+                        'url': url,
+                        'message_id': processing_msg.message_id,
+                        'original_message_id': update.message.message_id,
+                        'target_chat_id': config.admin_forum_group_id,
+                        'message_thread_id': topic_id,
+                        'is_batch': False
+                    })
+                except Exception as e:
+                    logger.error(f"Failed to enqueue admin job {job_id}: {e}")
+                    await update_job_status(job_id, 'failed', f"Queue error: {e}")
+                    await update.message.reply_text("Unable to process this video. Please try again.")
+                continue
+
+        # Normal mode processing
         allowed, reason, job_id = await submit_job_if_allowed(
             user_id=user_id,
             chat_id=chat_id,

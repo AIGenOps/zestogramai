@@ -38,6 +38,7 @@ class Settings(BaseSettings):
     pro_price_usd: int = Field(default=1, validation_alias="PRO_PRICE_USD")
     unlimited_price_usd: int = Field(default=20, validation_alias="UNLIMITED_PRICE_USD")
     payment_qr_path: Optional[str] = Field(default=None, validation_alias="PAYMENT_QR_PATH")
+    admin_forum_group_id: Optional[int] = Field(default=-1004452680578, validation_alias="ADMIN_FORUM_GROUP_ID")
     
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
@@ -84,6 +85,15 @@ class Settings(BaseSettings):
         if v == '' or v is None:
             return None
         return str(v)
+
+    @field_validator('admin_forum_group_id', mode='before')
+    def parse_admin_forum_group_id(cls, v):
+        if v == '' or v is None:
+            return None
+        try:
+            return int(v)
+        except Exception:
+            return None
 
     @property
     def owner_id(self) -> Optional[int]:

@@ -295,3 +295,35 @@ async def test_argument_validation():
         update.message.reply_text.reset_mock()
         await cmd(update, create_mock_context(["not_a_number"]))
         update.message.reply_text.assert_called_once_with(usage_str)
+
+@pytest.mark.asyncio
+async def test_users_and_health_and_admin_commands():
+    from src.handlers.admin import users_command, health_command, ban_command, unban_command, admin_command
+    from src.db import is_user_banned
+
+    update = create_mock_update(OWNER_ID)
+    context = create_mock_context([])
+
+    # Test /admin
+    await admin_command(update, context)
+    reply = update.message.reply_text.call_args[0][0]
+    assert "Admin Control Panel" in reply
+
+    # Test /users
+    await users_command(update, context)
+    reply = update.message.reply_text.call_args[0][0]
+    assert "User Statistics" in reply
+
+    # Test /health
+    await health_command(update, context)
+    reply = update.message.reply_text.call_args[0][0]
+    assert "System Health" in reply
+
+    # Test /ban
+    context_ban = create_mock_context([str(REGULAR_USER_ID)])
+    await ban_command(update, context_ban)
+    assert await is_user_banned(REGULAR_USER_ID) is True
+
+    # Test /unban
+    await unban_command(update, context_ban)
+    assert await is_user_banned(REGULAR_USER_ID) is False

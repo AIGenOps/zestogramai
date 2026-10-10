@@ -13,12 +13,18 @@ async def send_downloaded_media(
     context: ContextTypes.DEFAULT_TYPE, 
     chat_id: int, 
     url: str,
-    files: List[Dict[str, Any]]
+    files: List[Dict[str, Any]],
+    message_thread_id: Optional[int] = None
 ):
     if not files:
         return
 
     caption = files[0]['caption'] if config.include_caption else ""
+    # When sending to forum topic (admin submission), keep clean video with no links
+    if message_thread_id is not None:
+        import re
+        caption = re.sub(r'https?://\S+', '', caption).strip()
+
     # Truncate caption to 1024 chars (Telegram limit)
     if len(caption) > 1024:
         caption = caption[:1021] + "..."
@@ -45,6 +51,10 @@ async def send_downloaded_media(
                 raise e
         raise Exception("Max retries exceeded for flood control")
 
+    extra_kwargs = {}
+    if message_thread_id is not None:
+        extra_kwargs['message_thread_id'] = message_thread_id
+
     if len(files) == 1:
         f = files[0]
         path = f['path']
@@ -55,11 +65,11 @@ async def send_downloaded_media(
             try:
                 ext = path.lower()
                 if ext.endswith(('.mp4', '.webm', '.mkv', '.mov', '.avi')):
-                    await _send_with_retry(context.bot.send_video(chat_id=chat_id, video=cached_file_id, caption=caption))
+                    await _send_with_retry(context.bot.send_video(chat_id=chat_id, video=cached_file_id, caption=caption, **extra_kwargs))
                 elif ext.endswith(('.mp3', '.m4a', '.wav', '.ogg')):
-                    await _send_with_retry(context.bot.send_audio(chat_id=chat_id, audio=cached_file_id, caption=caption))
+                    await _send_with_retry(context.bot.send_audio(chat_id=chat_id, audio=cached_file_id, caption=caption, **extra_kwargs))
                 else:
-                    await _send_with_retry(context.bot.send_photo(chat_id=chat_id, photo=cached_file_id, caption=caption))
+                    await _send_with_retry(context.bot.send_photo(chat_id=chat_id, photo=cached_file_id, caption=caption, **extra_kwargs))
                 return
             except TelegramError as e:
                 logger.warning(f"Failed to send cached media (file_id might be invalid), uploading normally: {e}")
@@ -73,7 +83,8 @@ async def send_downloaded_media(
                     caption=caption,
                     write_timeout=300,
                     connect_timeout=60,
-                    read_timeout=300
+                    read_timeout=300,
+                    **extra_kwargs
                 ))
                 if msg.video:
                     await cache_media(url, msg.video.file_id, is_audio=is_audio)
@@ -84,7 +95,8 @@ async def send_downloaded_media(
                     caption=caption,
                     write_timeout=300,
                     connect_timeout=60,
-                    read_timeout=300
+                    read_timeout=300,
+                    **extra_kwargs
                 ))
                 if msg.audio:
                     await cache_media(url, msg.audio.file_id, is_audio=is_audio)
@@ -92,7 +104,8 @@ async def send_downloaded_media(
                 msg = await _send_with_retry(context.bot.send_photo(
                     chat_id=chat_id, 
                     photo=file_obj, 
-                    caption=caption
+                    caption=caption,
+                    **extra_kwargs
                 ))
                 if msg.photo:
                     await cache_media(url, msg.photo[-1].file_id, is_audio=is_audio)
@@ -128,7 +141,8 @@ async def send_downloaded_media(
                     media=media_group,
                     write_timeout=300,
                     connect_timeout=60,
-                    read_timeout=300
+                    read_timeout=300,
+                    **extra_kwargs
                 ))
                 
                 # Cache the first item's file_id

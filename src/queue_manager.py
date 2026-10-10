@@ -107,6 +107,10 @@ async def worker(worker_id: int, app: Application):
                 if not job or job['status'] in ('cancelled', 'failed', 'success'):
                     continue
 
+                target_chat_id = job.get('target_chat_id') or job_data.get('target_chat_id')
+                message_thread_id = job.get('message_thread_id') or job_data.get('message_thread_id')
+                is_admin_submission = bool(target_chat_id and message_thread_id)
+
                 # Same-User FIFO Enforcement: Ensure earlier jobs for this user complete first
                 from src.db import has_earlier_pending_job
                 if await has_earlier_pending_job(user_id, job_id):
@@ -114,17 +118,18 @@ async def worker(worker_id: int, app: Application):
                     await asyncio.sleep(0.2)
                     continue
 
-                from src.services.membership import get_user_quota_info, Plan
-                quota_info = await get_user_quota_info(user_id)
-                if quota_info.effective_plan != Plan.UNLIMITED and quota_info.usage >= quota_info.limit:
-                    logger.warning(f"Job {job_id} skipped: User {user_id} quota exhausted.")
-                    await update_job_status(job_id, 'failed', 'Quota limit reached')
-                    if message_id:
-                        try:
-                            await app.bot.edit_message_text(chat_id=chat_id, message_id=message_id, text="Quota limit reached for your current plan window.")
-                        except TelegramError:
-                            pass
-                    continue
+                if not is_admin_submission:
+                    from src.services.membership import get_user_quota_info, Plan
+                    quota_info = await get_user_quota_info(user_id)
+                    if quota_info.effective_plan != Plan.UNLIMITED and quota_info.usage >= quota_info.limit:
+                        logger.warning(f"Job {job_id} skipped: User {user_id} quota exhausted.")
+                        await update_job_status(job_id, 'failed', 'Quota limit reached')
+                        if message_id:
+                            try:
+                                await app.bot.edit_message_text(chat_id=chat_id, message_id=message_id, text="Quota limit reached for your current plan window.")
+                            except TelegramError:
+                                pass
+                        continue
 
                 await update_job_status(job_id, 'downloading')
                 
@@ -179,28 +184,47 @@ async def worker(worker_id: int, app: Application):
                     def __init__(self, bot):
                         self.bot = bot
                 
-                # 1. Deliver video to Telegram user
-                await send_downloaded_media(DummyContext(app.bot), chat_id, url, processed_files)
+                # 1. Deliver video to Telegram (user DM or admin topic)
+                delivery_chat_id = target_chat_id if is_admin_submission else chat_id
+                await send_downloaded_media(
+                    DummyContext(app.bot), 
+                    delivery_chat_id, 
+                    url, 
+                    processed_files,
+                    message_thread_id=message_thread_id if is_admin_submission else None
+                )
                 
-                # 2. Record successful delivery for quota atomically
-                from src.services.membership import record_successful_delivery
-                await record_successful_delivery(user_id, job_id=job_id)
+                # 2. Record successful delivery for quota atomically (only for normal user downloads)
+                if not is_admin_submission:
+                    from src.services.membership import record_successful_delivery
+                    await record_successful_delivery(user_id, job_id=job_id)
 
                 # 3. Mark job as success in DB
                 await update_job_status(job_id, 'success')
                 
-                # 4. Successful delivery cleanup: delete temporary processing message & original URL message
-                if message_id and message_id > 0:
-                    try:
-                        await app.bot.delete_message(chat_id=chat_id, message_id=message_id)
-                    except TelegramError:
-                        pass
-                    
-                if original_message_id and original_message_id > 0:
-                    try:
-                        await app.bot.delete_message(chat_id=chat_id, message_id=original_message_id)
-                    except TelegramError:
-                        pass
+                # 4. Cleanup & DM updates
+                if is_admin_submission:
+                    if message_id and message_id > 0:
+                        try:
+                            await app.bot.edit_message_text(chat_id=chat_id, message_id=message_id, text="✅ Reel sent to admin topic!")
+                        except TelegramError:
+                            pass
+                    if original_message_id and original_message_id > 0:
+                        try:
+                            await app.bot.delete_message(chat_id=chat_id, message_id=original_message_id)
+                        except TelegramError:
+                            pass
+                else:
+                    if message_id and message_id > 0:
+                        try:
+                            await app.bot.delete_message(chat_id=chat_id, message_id=message_id)
+                        except TelegramError:
+                            pass
+                    if original_message_id and original_message_id > 0:
+                        try:
+                            await app.bot.delete_message(chat_id=chat_id, message_id=original_message_id)
+                        except TelegramError:
+                            pass
     
             except Exception as e:
                 mapped_msg = map_error_to_user_message(e)
@@ -241,7 +265,9 @@ async def reconcile_queue():
             'chat_id': job['chat_id'],
             'url': job['url'],
             'message_id': job['message_id'],
-            'original_message_id': None,
+            'original_message_id': job.get('original_message_id'),
+            'target_chat_id': job.get('target_chat_id'),
+            'message_thread_id': job.get('message_thread_id'),
             'is_batch': False
         }
         await enqueue_job(job_data)
@@ -256,15 +282,17 @@ async def start_workers(app: Application):
 async def enqueue_job(job_data: Dict[str, Any]):
     await init_redis()
     user_id = job_data['user_id']
-    from src.services.membership import get_effective_plan, Plan
-    plan = await get_effective_plan(user_id)
-    
-    if plan == Plan.UNLIMITED:
+    if job_data.get('target_chat_id') and job_data.get('message_thread_id'):
         tier = 'unlimited'
-    elif plan == Plan.PRO:
-        tier = 'pro'
     else:
-        tier = 'free'
+        from src.services.membership import get_effective_plan, Plan
+        plan = await get_effective_plan(user_id)
+        if plan == Plan.UNLIMITED:
+            tier = 'unlimited'
+        elif plan == Plan.PRO:
+            tier = 'pro'
+        else:
+            tier = 'free'
         
     job_data['tier'] = tier
     

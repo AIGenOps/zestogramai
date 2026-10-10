@@ -55,6 +55,8 @@ async def post_init(application):
     commands = [
         BotCommand("start", "Start bot and show menu"),
         BotCommand("help", "Help guide & instructions"),
+        BotCommand("mode", "Toggle download / send to admin mode"),
+        BotCommand("status", "Check your plan and quota"),
         BotCommand("cancel", "Cancel your pending download jobs"),
         BotCommand("clear", "Clear recent bot messages in chat")
     ]
@@ -86,6 +88,12 @@ def main():
     app.add_handler(CommandHandler("start", start_command))
     app.add_handler(CommandHandler("help", help_command))
     app.add_handler(CommandHandler("status", status_command))
+    from src.handlers.admin_mode_handler import (
+        mode_command,
+        mode_toggle_callback,
+        admin_submission_decision_callback
+    )
+    app.add_handler(CommandHandler("mode", mode_command))
     app.add_handler(CommandHandler("settings", settings_command))
     app.add_handler(CommandHandler("queue", queue_command))
     app.add_handler(CommandHandler("cancel", cancel_command))
@@ -99,13 +107,23 @@ def main():
         revoke_command,
         addadmin_command,
         removeadmin_command,
-        admins_command
+        admins_command,
+        users_command,
+        health_command,
+        ban_command,
+        unban_command,
+        admin_command
     )
+    app.add_handler(CommandHandler("admin", admin_command))
     app.add_handler(CommandHandler("stats", stats_command))
+    app.add_handler(CommandHandler("users", users_command))
+    app.add_handler(CommandHandler("health", health_command))
     app.add_handler(CommandHandler("user", user_command))
     app.add_handler(CommandHandler("grantpro", grantpro_command))
     app.add_handler(CommandHandler("grantunlimited", grantunlimited_command))
     app.add_handler(CommandHandler("revoke", revoke_command))
+    app.add_handler(CommandHandler("ban", ban_command))
+    app.add_handler(CommandHandler("unban", unban_command))
     app.add_handler(CommandHandler("addadmin", addadmin_command))
     app.add_handler(CommandHandler("removeadmin", removeadmin_command))
     app.add_handler(CommandHandler("admins", admins_command))
@@ -114,6 +132,8 @@ def main():
     from src.handlers.convert_handler import convert_callback
     app.add_handler(CallbackQueryHandler(settings_callback, pattern="^(toggle_auto_cleanup|settings_done)$"))
     app.add_handler(CallbackQueryHandler(convert_callback, pattern="^convert_to:"))
+    app.add_handler(CallbackQueryHandler(mode_toggle_callback, pattern="^set_mode:(normal|admin)$"))
+    app.add_handler(CallbackQueryHandler(admin_submission_decision_callback, pattern="^(approve_sub|disapprove_sub):"))
     
     app.add_handler(MessageHandler((filters.TEXT | filters.Document.ALL | filters.VIDEO | filters.AUDIO) & ~filters.COMMAND, handle_message))
     

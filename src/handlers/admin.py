@@ -219,7 +219,7 @@ async def admins_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(UNAUTHORIZED_MSG)
         return
 
-    db_admins = await get_all_admins_db()
+    db_admins = [uid for uid in await get_all_admins_db() if not is_owner(uid)]
     env_admins = [uid for uid in config.parsed_admin_user_ids if not is_owner(uid)]
     all_admins = list(dict.fromkeys(db_admins + env_admins))
 
@@ -229,3 +229,101 @@ async def admins_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     lines = ["Admins:"] + [str(uid) for uid in all_admins]
     await update.message.reply_text("\n".join(lines))
+
+async def users_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    if not await require_admin(user_id):
+        await update.message.reply_text(UNAUTHORIZED_MSG)
+        return
+        
+    from src.db import get_unique_users_count
+    stats = await get_system_stats()
+    unique_count = await get_unique_users_count()
+    
+    text = (
+        f"👥 <b>User Statistics</b>\n\n"
+        f"<b>Total Unique Users:</b> {unique_count:,}\n"
+        f"• Free Users: {stats['free_users']:,}\n"
+        f"• Pro Users: {stats['pro_users']:,}\n"
+        f"• Unlimited Users: {stats['unlimited_users']:,}\n\n"
+        f"Use <code>/user &lt;id&gt;</code> to inspect a specific user."
+    )
+    await update.message.reply_text(text, parse_mode="HTML")
+
+async def health_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    if not await require_admin(user_id):
+        await update.message.reply_text(UNAUTHORIZED_MSG)
+        return
+        
+    import psutil
+    cpu_percent = psutil.cpu_percent(interval=None)
+    memory = psutil.virtual_memory()
+    disk = psutil.disk_usage('/')
+    
+    health_text = (
+        "🖥 <b>System Health</b>\n\n"
+        f"<b>CPU Usage:</b> {cpu_percent}%\n"
+        f"<b>RAM:</b> {memory.percent}% ({memory.used / 1024 / 1024 / 1024:.2f}GB / {memory.total / 1024 / 1024 / 1024:.2f}GB)\n"
+        f"<b>Disk:</b> {disk.percent}% ({disk.used / 1024 / 1024 / 1024:.2f}GB / {disk.total / 1024 / 1024 / 1024:.2f}GB)"
+    )
+    await update.message.reply_text(health_text, parse_mode="HTML")
+
+async def ban_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    if not await require_admin(user_id):
+        await update.message.reply_text(UNAUTHORIZED_MSG)
+        return
+        
+    target_id = _parse_target_id(context)
+    if target_id is None:
+        await update.message.reply_text("Usage: /ban <telegram_id>")
+        return
+        
+    from src.db import ban_user
+    await ban_user(target_id)
+    logger.info(f"Admin {user_id} banned user {target_id}")
+    await update.message.reply_text(f"🚫 User {target_id} has been banned.")
+
+async def unban_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    if not await require_admin(user_id):
+        await update.message.reply_text(UNAUTHORIZED_MSG)
+        return
+        
+    target_id = _parse_target_id(context)
+    if target_id is None:
+        await update.message.reply_text("Usage: /unban <telegram_id>")
+        return
+        
+    from src.db import unban_user
+    await unban_user(target_id)
+    logger.info(f"Admin {user_id} unbanned user {target_id}")
+    await update.message.reply_text(f"✅ User {target_id} has been unbanned.")
+
+async def admin_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    if not await require_admin(user_id):
+        await update.message.reply_text(UNAUTHORIZED_MSG)
+        return
+        
+    text = (
+        "👑 <b>Admin Control Panel</b>\n\n"
+        f"Status: Authorized Admin (<code>{user_id}</code>)\n\n"
+        "<b>Analytics & Health:</b>\n"
+        "• /stats - Global system and download statistics\n"
+        "• /users - Total unique users and plan breakdown\n"
+        "• /health - Server CPU, RAM, and disk utilization\n\n"
+        "<b>User Management:</b>\n"
+        "• /user &lt;id&gt; - Inspect user status and download quota\n"
+        "• /grantpro &lt;id&gt; - Grant 30-day Pro membership\n"
+        "• /grantunlimited &lt;id&gt; - Grant Unlimited membership\n"
+        "• /revoke &lt;id&gt; - Revoke membership back to Free\n"
+        "• /ban &lt;id&gt; - Ban a user from the bot\n"
+        "• /unban &lt;id&gt; - Unban a user\n\n"
+        "<b>Admin Access:</b>\n"
+        "• /admins - List all administrators\n"
+        "• /addadmin &lt;id&gt; - Add new admin (owner only)\n"
+        "• /removeadmin &lt;id&gt; - Remove admin (owner only)"
+    )
+    await update.message.reply_text(text, parse_mode="HTML")
