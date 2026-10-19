@@ -1,14 +1,15 @@
 FROM python:3.12-slim
 
-# Install ffmpeg for yt-dlp processing
+# Install ffmpeg and nodejs for yt-dlp processing
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends ffmpeg && \
+    apt-get install -y --no-install-recommends ffmpeg nodejs && \
     rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir --upgrade pip && \
+    pip install --no-cache-dir --upgrade -r requirements.txt
 
 # Create a non-root user and give full permissions on /data directory
 RUN useradd -m botuser && \

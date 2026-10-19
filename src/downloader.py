@@ -31,7 +31,15 @@ def _download_sync(url: str, output_dir: str, audio_only: bool, progress_callbac
         'format_sort': ['vcodec:h264', 'ext:mp4:m4a'],
         'restrictfilenames': True,
         'socket_timeout': 30,
+        'extractor_args': {
+            'youtube': {
+                'player_client': ['android', 'ios', 'web']
+            }
+        }
     }
+    
+    if shutil.which('node'):
+        ydl_opts['js_runtimes'] = {'node': {}}
     
     if progress_callback:
         ydl_opts['progress_hooks'] = [progress_callback]
