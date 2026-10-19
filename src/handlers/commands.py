@@ -11,7 +11,7 @@ from src.services.membership import get_user_quota_info, get_user_membership, Pl
 
 logger = logging.getLogger(__name__)
 
-CORE_HELP_MESSAGE = "Send me an Instagram Reel or YouTube Short link and I'll download it for you."
+CORE_HELP_MESSAGE = "Send me an Instagram Reel, YouTube Short, or Facebook Reel/Video link and I'll download it for you."
 
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await check_access(update, context):

@@ -17,6 +17,8 @@ class BatchTracker:
             return "📸 Instagram"
         elif "youtube.com" in url or "youtu.be" in url or "y2u.be" in url:
             return "🎥 YouTube"
+        elif any(d in url for d in ("facebook.com", "fb.watch", "fb.gg")):
+            return "📘 Facebook"
         return "🔗 Link"
         
     def add_batch(self, chat_id: int, message_id: int, jobs_info: List[Dict]):

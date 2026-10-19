@@ -61,3 +61,52 @@ def test_profile_link_unsupported():
     supported, unsupported = parse_text_urls(text)
     assert len(supported) == 0
     assert len(unsupported) == 1
+
+def test_extract_facebook_reels():
+    text = """
+    Reel 1: https://www.facebook.com/reel/1234567890/
+    Reel 2: https://www.facebook.com/reels/0987654321/
+    Reel 3: https://www.facebook.com/share/r/14iL9mJ/
+    """
+    urls = extract_instagram_urls(text)
+    assert len(urls) == 3
+    assert "https://www.facebook.com/reel/1234567890/" in urls
+    assert "https://www.facebook.com/reels/0987654321/" in urls
+    assert "https://www.facebook.com/share/r/14iL9mJ/" in urls
+
+def test_extract_facebook_watch_and_videos():
+    text = """
+    Watch 1: https://www.facebook.com/watch/?v=1122334455
+    Watch 2: https://www.facebook.com/video.php?v=2233445566
+    Video page: https://www.facebook.com/someuser/videos/3344556677/
+    Share video: https://www.facebook.com/share/v/4455667788/
+    Short link: https://fb.watch/abcXYZ123/
+    """
+    urls = extract_instagram_urls(text)
+    assert len(urls) == 5
+    assert "https://www.facebook.com/watch/?v=1122334455" in urls
+    assert "https://www.facebook.com/video.php?v=2233445566" in urls
+    assert "https://www.facebook.com/someuser/videos/3344556677/" in urls
+    assert "https://www.facebook.com/share/v/4455667788/" in urls
+    assert "https://fb.watch/abcXYZ123/" in urls
+
+def test_extract_facebook_tracking_params():
+    text = "https://www.facebook.com/watch/?v=987654321&mibextid=0cALme&fbclid=IwAR123"
+    urls = extract_instagram_urls(text)
+    assert urls == ["https://www.facebook.com/watch/?v=987654321"]
+
+    reel_text = "https://www.facebook.com/reel/1234567890/?s=yWDuG2&fs=e&mibextid=0cALme"
+    reel_urls = extract_instagram_urls(reel_text)
+    assert reel_urls == ["https://www.facebook.com/reel/1234567890/"]
+
+def test_facebook_unsupported_links():
+    text = """
+    Profile: https://www.facebook.com/zuck/
+    Group: https://www.facebook.com/groups/123456789/
+    Photo: https://www.facebook.com/photo.php?fbid=123456789
+    Watch without ID: https://www.facebook.com/watch/
+    """
+    supported, unsupported = parse_text_urls(text)
+    assert len(supported) == 0
+    assert len(unsupported) == 4
+

@@ -20,9 +20,7 @@ async def test_start_command_message():
     
     with patch("src.utils.access_control.is_user_allowed", AsyncMock(return_value=True)):
         await start_command(update, context)
-        update.message.reply_text.assert_called_once_with(
-            "Send me an Instagram Reel or YouTube Short link and I'll download it for you."
-        )
+        update.message.reply_text.assert_called_once_with(CORE_HELP_MESSAGE)
 
 @pytest.mark.asyncio
 async def test_help_command_message():
@@ -34,9 +32,7 @@ async def test_help_command_message():
     
     with patch("src.utils.access_control.is_user_allowed", AsyncMock(return_value=True)):
         await help_command(update, context)
-        update.message.reply_text.assert_called_once_with(
-            "Send me an Instagram Reel or YouTube Short link and I'll download it for you."
-        )
+        update.message.reply_text.assert_called_once_with(CORE_HELP_MESSAGE)
 
 @pytest.mark.asyncio
 async def test_single_supported_url_handling():

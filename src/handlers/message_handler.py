@@ -78,7 +78,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if unsupported_urls:
             await update.message.reply_text("This link is not supported.")
         else:
-            await update.message.reply_text("Send me an Instagram Reel or YouTube Short link and I'll download it for you.")
+            from src.handlers.commands import CORE_HELP_MESSAGE
+            await update.message.reply_text(CORE_HELP_MESSAGE)
         return
 
     from src.services.admin_mode import get_admin_mode_state

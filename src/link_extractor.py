@@ -7,11 +7,13 @@ def is_supported_url(url: str) -> bool:
     Checks if a URL belongs to a supported platform:
     1. Instagram Reels (/reel/, /reels/, /share/r/, /share/reel/, /<username>/reel/)
     2. YouTube Shorts (/shorts/, youtu.be shortlinks)
+    3. Facebook Reels & Videos (/reel/, /reels/, /share/r/, /share/v/, /<username>/videos/, /watch, /video.php, fb.watch, fb.gg)
     """
     try:
         parsed = urllib.parse.urlparse(url)
         netloc = parsed.netloc.lower()
         path = parsed.path
+        qs = urllib.parse.parse_qs(parsed.query)
         
         # Instagram Reel checks
         if any(domain in netloc for domain in ("instagram.com", "instagr.am")):
@@ -28,6 +30,20 @@ def is_supported_url(url: str) -> bool:
             if netloc in ("youtu.be", "y2u.be") and path.strip("/"):
                 return True
             return False
+
+        # Facebook Reels & Videos checks
+        if any(domain in netloc for domain in ("facebook.com", "fb.watch", "fb.gg")):
+            if "fb.watch" in netloc and path.strip("/"):
+                return True
+            if re.search(r"/(?:reels?|share/(?:r|v))/([^/?#&]+)", path, re.IGNORECASE):
+                return True
+            if re.search(r"^/[^/]+/videos/(?:[^/]+/)?([^/?#&]+)", path, re.IGNORECASE):
+                return True
+            clean_path = path.rstrip("/")
+            if clean_path in ("/watch", "/video.php") or clean_path.startswith("/watch/"):
+                if qs.get("v") or qs.get("video_id"):
+                    return True
+            return False
             
         return False
     except Exception:
@@ -36,9 +52,9 @@ def is_supported_url(url: str) -> bool:
 def parse_text_urls(text: str) -> Tuple[List[str], List[str]]:
     """
     Parses URLs from text message and categorizes them into:
-    - supported_urls: Instagram Reels & YouTube Shorts
-    - unsupported_urls: All other URLs (Posts, Stories, Watch, TikTok, etc.)
-    Deduplicates URLs and strips query parameters.
+    - supported_urls: Instagram Reels, YouTube Shorts, Facebook Reels & Videos
+    - unsupported_urls: All other URLs (Posts, Stories, Watch without ID, TikTok, etc.)
+    Deduplicates URLs and strips tracking query parameters.
     """
     pattern = r"(https?://[^\s]+)"
     raw_matches = re.findall(pattern, text)
@@ -50,11 +66,24 @@ def parse_text_urls(text: str) -> Tuple[List[str], List[str]]:
         match = match.rstrip(".,;:)'\"!]")
         try:
             parsed = urllib.parse.urlparse(match)
+            netloc = parsed.netloc.lower()
+            path = parsed.path
+            
+            clean_query = ""
+            if any(domain in netloc for domain in ("facebook.com", "fb.watch", "fb.gg")):
+                clean_path = path.rstrip("/")
+                if clean_path in ("/watch", "/video.php") or clean_path.startswith("/watch/"):
+                    qs = urllib.parse.parse_qs(parsed.query)
+                    if "v" in qs and qs["v"]:
+                        clean_query = f"v={qs['v'][0]}"
+                    elif "video_id" in qs and qs["video_id"]:
+                        clean_query = f"video_id={qs['video_id'][0]}"
+
             clean_url = urllib.parse.urlunparse((
                 parsed.scheme if parsed.scheme else "https",
                 parsed.netloc,
                 parsed.path,
-                "", "", ""
+                "", clean_query, ""
             ))
             
             if is_supported_url(clean_url):
