@@ -4,7 +4,8 @@ __pycache__/
 *$py.class
 
 # Environment variables
-.env
+.env*
+!.env.example
 
 # Data and SQLite
 data/
