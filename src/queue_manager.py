@@ -77,8 +77,12 @@ def map_error_to_user_message(error: Any) -> str:
     err_str = str(error).lower()
     if any(kw in err_str for kw in ("not supported", "unsupported", "posts and carousels")):
         return "This link is not supported."
-    if any(kw in err_str for kw in ("private", "login", "not found", "404", "sign in", "unavailable", "removed")):
-        return "This video is unavailable or private."
+    if any(kw in err_str for kw in (
+        "private", "login", "not found", "404", "sign in", "unavailable",
+        "removed", "empty media response", "checkpoint", "logged-in",
+        "restricted", "page not found"
+    )):
+        return "This video is unavailable, private, or requires login."
     if any(kw in err_str for kw in ("429", "too many requests", "rate limit", "timeout", "connection", "network", "temporary")):
         return "Unable to access this video right now. Please try again later."
     if any(kw in err_str for kw in ("ffmpeg", "compress", "strip_metadata", "too large", "cannot be compressed", "processing")):

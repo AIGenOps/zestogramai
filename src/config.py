@@ -13,7 +13,9 @@ class Settings(BaseSettings):
     
     max_concurrent_downloads: int = 2
     max_retries: int = 2
-    cookies_file_path: Optional[str] = None
+    cookies_file_path: Optional[str] = Field(default=None, validation_alias="COOKIES_FILE_PATH")
+    cookies_content: Optional[str] = Field(default=None, validation_alias="COOKIES_CONTENT")
+    instagram_cookies: Optional[str] = Field(default=None, validation_alias="INSTAGRAM_COOKIES")
     include_caption: bool = True
     keep_files_after_send: bool = False
     
@@ -143,3 +145,22 @@ FREE_LIMIT = config.free_limit
 PRO_LIMIT = config.pro_limit
 PRO_DURATION_DAYS = config.pro_duration_days
 QUOTA_WINDOW_HOURS = config.quota_window_hours
+
+def get_cookies_path() -> Optional[str]:
+    import os
+    if config.cookies_file_path and os.path.exists(config.cookies_file_path):
+        return config.cookies_file_path
+        
+    content = config.cookies_content or config.instagram_cookies
+    if content and content.strip():
+        data_dir = get_data_dir()
+        cookies_file = os.path.join(data_dir, "cookies.txt")
+        try:
+            with open(cookies_file, "w", encoding="utf-8") as f:
+                f.write(content.strip() + "\n")
+            return cookies_file
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).warning(f"Failed to write cookies from env: {e}")
+            
+    return None

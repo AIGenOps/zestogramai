@@ -327,3 +327,31 @@ async def test_users_and_health_and_admin_commands():
     # Test /unban
     await unban_command(update, context_ban)
     assert await is_user_banned(REGULAR_USER_ID) is False
+
+@pytest.mark.asyncio
+async def test_logs_command():
+    from src.handlers.admin import logs_command
+    import tempfile, os
+    from src.config import get_data_dir
+
+    update = create_mock_update(OWNER_ID)
+    context = create_mock_context([])
+
+    # 1. No log file
+    await logs_command(update, context)
+    reply = update.message.reply_text.call_args[0][0]
+    assert "No log file found." in reply or "Recent Logs" in reply
+
+    # 2. Create mock log file
+    log_dir = os.path.join(get_data_dir(), "logs")
+    os.makedirs(log_dir, exist_ok=True)
+    log_file = os.path.join(log_dir, "bot.log")
+    with open(log_file, "w") as f:
+        f.write("Line 1\nLine 2\nLine 3 with bot12345:ABCdef token\n")
+
+    await logs_command(update, context)
+    reply = update.message.reply_text.call_args[0][0]
+    assert "Recent Logs" in reply
+    assert "Line 1" in reply
+    assert "bot<TOKEN>" in reply
+

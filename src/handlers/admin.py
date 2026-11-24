@@ -313,7 +313,8 @@ async def admin_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "<b>Analytics & Health:</b>\n"
         "• /stats - Global system and download statistics\n"
         "• /users - Total unique users and plan breakdown\n"
-        "• /health - Server CPU, RAM, and disk utilization\n\n"
+        "• /health - Server CPU, RAM, and disk utilization\n"
+        "• /logs [n] - View recent server logs (default: 50 lines)\n\n"
         "<b>User Management:</b>\n"
         "• /user &lt;id&gt; - Inspect user status and download quota\n"
         "• /grantpro &lt;id&gt; - Grant 30-day Pro membership\n"
@@ -327,3 +328,33 @@ async def admin_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "• /removeadmin &lt;id&gt; - Remove admin (owner only)"
     )
     await update.message.reply_text(text, parse_mode="HTML")
+
+async def logs_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    if not await require_admin(user_id):
+        await update.message.reply_text(UNAUTHORIZED_MSG)
+        return
+        
+    lines_count = 50
+    if context.args and context.args[0].isdigit():
+        lines_count = min(int(context.args[0]), 200)
+
+    import os, re
+    from src.config import get_data_dir
+    log_file = os.path.join(get_data_dir(), "logs", "bot.log")
+    if not os.path.exists(log_file):
+        await update.message.reply_text("No log file found.")
+        return
+
+    try:
+        with open(log_file, "r", encoding="utf-8", errors="ignore") as f:
+            all_lines = f.readlines()
+        recent_lines = all_lines[-lines_count:]
+        output = "".join(recent_lines)
+        output = re.sub(r'bot\d+:[A-Za-z0-9_-]+', 'bot<TOKEN>', output)
+        if len(output) > 3800:
+            output = output[-3800:]
+        await update.message.reply_text(f"📋 <b>Recent Logs ({len(recent_lines)} lines):</b>\n<pre>{output}</pre>", parse_mode="HTML")
+    except Exception as e:
+        await update.message.reply_text(f"Error reading logs: {e}")
+

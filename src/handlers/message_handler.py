@@ -55,6 +55,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         from src.handlers.admin import health_command
         await health_command(update, context)
         return
+    elif clean_text in ("logs", "/logs"):
+        from src.handlers.admin import logs_command
+        await logs_command(update, context)
+        return
     elif clean_text in ("📊 Stats", "stats"):
         from src.handlers.commands import stats_command
         await stats_command(update, context)

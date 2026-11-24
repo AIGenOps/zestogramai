@@ -60,8 +60,15 @@ def _download_sync(url: str, output_dir: str, audio_only: bool, progress_callbac
             'preferredquality': '192',
         }]
     
-    if config.cookies_file_path and os.path.exists(config.cookies_file_path):
-        ydl_opts['cookiefile'] = config.cookies_file_path
+    from src.config import get_cookies_path
+    active_cookies = get_cookies_path()
+    if active_cookies and os.path.exists(active_cookies):
+        ydl_opts['cookiefile'] = active_cookies
+
+    if 'instagram.com' in url:
+        ydl_opts.setdefault('http_headers', {})['User-Agent'] = (
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36'
+        )
 
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -97,7 +104,10 @@ def _download_sync(url: str, output_dir: str, audio_only: bool, progress_callbac
         error_msg = str(e)
         logger.error(f"yt-dlp error: {error_msg}")
         retryable = True
-        if any(kw in error_msg.lower() for kw in ("private", "login", "not found", "404", "sign in")):
+        if any(kw in error_msg.lower() for kw in (
+            "private", "login", "not found", "404", "sign in",
+            "empty media response", "checkpoint", "logged-in", "restricted", "page not found"
+        )):
             retryable = False
         raise DownloadError(f"yt-dlp failed: {error_msg}", retryable=retryable)
     except DownloadError:
@@ -159,14 +169,14 @@ async def download_media(job_id: int, url: str, audio_only: bool = False, progre
                 retries += 1
                 logger.warning(f"Download failed for job {job_id}, retrying ({retries}/{config.max_retries})...")
                 await asyncio.sleep(2 * retries)
-            elif not e.retryable and "instagram.com" in url:
+            elif "instagram.com" in url or "instagr.am" in url:
                 logger.info("Attempting Instaloader fallback...")
                 try:
                     files = await asyncio.to_thread(_fallback_instaloader_sync, url, output_dir)
                     if files:
                         return files
-                except Exception:
-                    pass
+                except Exception as fb_err:
+                    logger.warning(f"Instaloader fallback also failed: {fb_err}")
                 shutil.rmtree(output_dir, ignore_errors=True)
                 raise e
             else:

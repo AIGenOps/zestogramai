@@ -155,8 +155,9 @@ async def test_processing_message_created_only_for_accepted_jobs():
 @pytest.mark.asyncio
 async def test_error_message_mapping_categories():
     assert map_error_to_user_message("Instagram posts and carousels are no longer supported.") == "This link is not supported."
-    assert map_error_to_user_message("yt-dlp error: Video is private or login required.") == "This video is unavailable or private."
-    assert map_error_to_user_message("HTTP Error 404: Not Found") == "This video is unavailable or private."
+    assert map_error_to_user_message("yt-dlp error: Video is private or login required.") == "This video is unavailable, private, or requires login."
+    assert map_error_to_user_message("HTTP Error 404: Not Found") == "This video is unavailable, private, or requires login."
+    assert map_error_to_user_message("Instagram sent an empty media response. Check if this post is accessible in your browser without being logged-in.") == "This video is unavailable, private, or requires login."
     assert map_error_to_user_message("HTTP Error 429: Too Many Requests") == "Unable to access this video right now. Please try again later."
     assert map_error_to_user_message("Connection timeout during network request") == "Unable to access this video right now. Please try again later."
     assert map_error_to_user_message("Video is too large and cannot be compressed below 50MB limit.") == "Unable to process this video. Please try again."

@@ -123,6 +123,7 @@ def main():
         admins_command,
         users_command,
         health_command,
+        logs_command,
         ban_command,
         unban_command,
         admin_command
@@ -131,6 +132,7 @@ def main():
     app.add_handler(CommandHandler("stats", stats_command))
     app.add_handler(CommandHandler("users", users_command))
     app.add_handler(CommandHandler("health", health_command))
+    app.add_handler(CommandHandler("logs", logs_command))
     app.add_handler(CommandHandler("user", user_command))
     app.add_handler(CommandHandler("grantpro", grantpro_command))
     app.add_handler(CommandHandler("grantunlimited", grantunlimited_command))
