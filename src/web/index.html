@@ -7,23 +7,26 @@
   <meta name="description" content="Minimalist, free media downloader for Instagram Reels, YouTube, Facebook, and more.">
   <style>
     :root {
-      --bg-base: #0b0f19;
-      --bg-surface: #131b2e;
-      --bg-surface-elevated: #1a253e;
-      --border-subtle: #243354;
-      --border-focus: #38bdf8;
-      --text-primary: #f8fafc;
-      --text-secondary: #94a3b8;
-      --text-muted: #64748b;
-      --accent: #0284c7;
-      --accent-hover: #0369a1;
-      --accent-ring: rgba(56, 189, 248, 0.35);
-      --success: #10b981;
-      --success-surface: rgba(16, 185, 129, 0.1);
-      --danger: #ef4444;
-      --danger-surface: rgba(239, 68, 68, 0.1);
-      --radius: 12px;
-      --transition: 0.2s ease;
+      --bg-base: #000000;
+      --bg-surface: #0a0a0a;
+      --bg-surface-elevated: #141414;
+      --border-subtle: #242424;
+      --border-hover: #3d3d3d;
+      --border-focus: #ffffff;
+      --text-primary: #ffffff;
+      --text-secondary: #a1a1aa;
+      --text-muted: #71717a;
+      --accent: #ffffff;
+      --accent-hover: #e4e4e7;
+      --accent-text: #000000;
+      --accent-ring: rgba(255, 255, 255, 0.25);
+      --badge-surface: #141414;
+      --badge-border: #27272a;
+      --alert-surface: #121212;
+      --alert-border: #3f3f46;
+      --alert-text: #e4e4e7;
+      --radius: 10px;
+      --transition: 0.15s ease;
     }
 
     * {
@@ -51,12 +54,12 @@
       background-color: var(--bg-surface);
       border: 1px solid var(--border-subtle);
       border-radius: var(--radius);
-      padding: 2rem;
-      box-shadow: 0 20px 40px rgba(0, 0, 0, 0.4);
+      padding: 2.25rem 2rem;
+      box-shadow: 0 24px 60px rgba(0, 0, 0, 0.85);
     }
 
     .header {
-      margin-bottom: 1.75rem;
+      margin-bottom: 2rem;
       text-align: center;
     }
 
@@ -65,28 +68,29 @@
       align-items: center;
       gap: 0.5rem;
       padding: 0.35rem 0.85rem;
-      background-color: var(--bg-surface-elevated);
-      border: 1px solid var(--border-subtle);
+      background-color: var(--badge-surface);
+      border: 1px solid var(--badge-border);
       border-radius: 9999px;
       font-size: 0.75rem;
       font-weight: 600;
-      letter-spacing: 0.05em;
+      letter-spacing: 0.06em;
       text-transform: uppercase;
-      color: var(--border-focus);
+      color: var(--text-primary);
       margin-bottom: 0.85rem;
     }
 
     .brand-badge svg {
       width: 14px;
       height: 14px;
+      color: var(--text-primary);
     }
 
     h1 {
-      font-size: 1.75rem;
+      font-size: 1.85rem;
       font-weight: 700;
       color: var(--text-primary);
       margin-bottom: 0.5rem;
-      letter-spacing: -0.02em;
+      letter-spacing: -0.03em;
     }
 
     .subtitle {
@@ -99,16 +103,16 @@
       flex-wrap: wrap;
       justify-content: center;
       gap: 0.4rem;
-      margin-top: 0.85rem;
+      margin-top: 1rem;
     }
 
     .tag {
       font-size: 0.75rem;
-      padding: 0.2rem 0.55rem;
+      padding: 0.25rem 0.6rem;
       border-radius: 4px;
-      background-color: rgba(255, 255, 255, 0.04);
-      color: var(--text-muted);
-      border: 1px solid rgba(255, 255, 255, 0.06);
+      background-color: #121212;
+      color: var(--text-secondary);
+      border: 1px solid var(--border-subtle);
     }
 
     form {
@@ -158,7 +162,7 @@
     }
 
     input[type="url"]:user-invalid {
-      border-color: var(--danger);
+      border-color: var(--text-muted);
     }
 
     .input-icon {
@@ -208,19 +212,20 @@
     }
 
     .format-label:hover {
-      border-color: var(--text-muted);
+      border-color: var(--border-hover);
+      color: var(--text-primary);
     }
 
     .format-label input[type="radio"] {
-      accent-color: var(--border-focus);
+      accent-color: #ffffff;
       width: 16px;
       height: 16px;
     }
 
     .format-label:has(input[type="radio"]:checked) {
-      border-color: var(--border-focus);
-      background-color: rgba(56, 189, 248, 0.08);
-      color: var(--text-primary);
+      border-color: #ffffff;
+      background-color: rgba(255, 255, 255, 0.08);
+      color: #ffffff;
       font-weight: 600;
     }
 
@@ -228,10 +233,11 @@
       width: 18px;
       height: 18px;
       color: var(--text-muted);
+      transition: color var(--transition);
     }
 
     .format-label:has(input[type="radio"]:checked) .format-icon {
-      color: var(--border-focus);
+      color: #ffffff;
     }
 
     button[type="submit"] {
@@ -242,7 +248,7 @@
       width: 100%;
       padding: 0.95rem;
       background-color: var(--accent);
-      color: #ffffff;
+      color: var(--accent-text);
       border: none;
       border-radius: 8px;
       font-size: 1rem;
@@ -261,18 +267,19 @@
     }
 
     button[type="submit"]:focus-visible {
-      outline: 2px solid var(--border-focus);
+      outline: 2px solid #ffffff;
       outline-offset: 3px;
     }
 
     button[type="submit"]:disabled {
-      opacity: 0.7;
+      opacity: 0.5;
       cursor: not-allowed;
     }
 
     .btn-icon {
       width: 18px;
       height: 18px;
+      color: var(--accent-text);
     }
 
     /* Live Status & Feedback */
@@ -284,8 +291,8 @@
       display: inline-block;
       width: 18px;
       height: 18px;
-      border: 2px solid rgba(255, 255, 255, 0.25);
-      border-top-color: #ffffff;
+      border: 2px solid rgba(0, 0, 0, 0.25);
+      border-top-color: #000000;
       border-radius: 50%;
       animation: spin 0.8s linear infinite;
     }
@@ -308,16 +315,13 @@
       height: 20px;
       flex-shrink: 0;
       margin-top: 2px;
+      color: var(--text-primary);
     }
 
     .alert-error {
-      background-color: var(--danger-surface);
-      border: 1px solid rgba(239, 68, 68, 0.3);
-      color: #fca5a5;
-    }
-
-    .alert-error svg {
-      color: var(--danger);
+      background-color: var(--alert-surface);
+      border: 1px solid var(--alert-border);
+      color: var(--alert-text);
     }
 
     /* Result Card */
@@ -352,12 +356,12 @@
       align-items: center;
       gap: 0.35rem;
       padding: 0.25rem 0.55rem;
-      background-color: var(--success-surface);
-      border: 1px solid rgba(16, 185, 129, 0.3);
+      background-color: rgba(255, 255, 255, 0.1);
+      border: 1px solid var(--border-hover);
       border-radius: 4px;
       font-size: 0.75rem;
       font-weight: 600;
-      color: var(--success);
+      color: var(--text-primary);
       flex-shrink: 0;
     }
 
@@ -374,28 +378,33 @@
       justify-content: center;
       gap: 0.5rem;
       padding: 0.85rem;
-      background-color: var(--success);
-      color: #0b0f19;
+      background-color: #ffffff;
+      color: #000000;
       text-decoration: none;
       font-weight: 600;
       border-radius: 6px;
       font-size: 0.95rem;
-      transition: opacity var(--transition);
+      transition: background-color var(--transition);
     }
 
     .download-action-btn:hover {
-      opacity: 0.92;
+      background-color: #e4e4e7;
+    }
+
+    .download-action-btn svg {
+      color: #000000;
     }
 
     .reset-btn {
       background: none;
       border: none;
-      color: var(--text-secondary);
+      color: var(--text-muted);
       font-size: 0.85rem;
       cursor: pointer;
       text-align: center;
       text-decoration: underline;
       padding: 0.25rem;
+      transition: color var(--transition);
     }
 
     .reset-btn:hover {
@@ -403,7 +412,7 @@
     }
 
     .footer {
-      margin-top: 1.75rem;
+      margin-top: 2rem;
       text-align: center;
       font-size: 0.8rem;
       color: var(--text-muted);
@@ -415,7 +424,7 @@
     }
 
     .footer a:hover {
-      text-decoration: underline;
+      color: var(--text-primary);
     }
 
     .hidden {
