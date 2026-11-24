@@ -2,7 +2,6 @@ import logging
 import asyncio
 import os
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters
-from http.server import HTTPServer, BaseHTTPRequestHandler
 import threading
 from src.config import config, get_data_dir
 from src.db import init_db
@@ -27,36 +26,10 @@ logging.getLogger().addHandler(file_handler)
 
 logger = logging.getLogger(__name__)
 
-class HealthCheckHandler(BaseHTTPRequestHandler):
-    def _send_ok(self, send_body=True):
-        body = b"OK"
-        self.send_response(200)
-        self.send_header("Content-Type", "text/plain; charset=utf-8")
-        self.send_header("Content-Length", str(len(body)))
-        self.send_header("Connection", "close")
-        self.end_headers()
-        if send_body:
-            self.wfile.write(body)
+from src.web_server import start_web_server
 
-    def do_GET(self):
-        self._send_ok(send_body=True)
-
-    def do_HEAD(self):
-        self._send_ok(send_body=False)
-
-    def do_POST(self):
-        self._send_ok(send_body=True)
-
-    def log_message(self, format, *args):
-        pass
-
-def start_health_server(port: int):
-    try:
-        server = HTTPServer(("0.0.0.0", port), HealthCheckHandler)
-        logger.info(f"Render Health Check HTTP server started on 0.0.0.0:{port}")
-        server.serve_forever()
-    except Exception as e:
-        logger.warning(f"Could not start HTTP health server on port {port}: {e}")
+# Backwards compatibility alias
+start_health_server = start_web_server
 
 async def post_init(application):
     from src.cleanup import cleanup_loop
